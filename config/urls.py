@@ -20,6 +20,7 @@ urlpatterns = [
     path("api/admin/homepage/", include("apps.homepage.admin_urls")),
     path("api/admin/partners/", include("apps.partners.admin_urls")),
     path("api/admin/gallery/", include("apps.gallery.admin_urls")),
+    path("api/public/szfb/", include("apps.scraper.urls")),
 ]
 
 if settings.DEBUG:
