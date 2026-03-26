@@ -1,13 +1,15 @@
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
+from django.utils import timezone
+from django.db.models import Q
 from apps.scraper.models import SzfbTeamWatch
 from apps.scraper.serializers import (
     SzfbMatchSerializer,
     SzfbStandingRowSerializer,
     SzfbTeamWatchSerializer,
 )
+
 
 
 class SzfbTeamWatchDetailView(RetrieveAPIView):
@@ -62,5 +64,36 @@ class SzfbWatchDashboardView(APIView):
                 "standings": SzfbStandingRowSerializer(standings, many=True).data,
                 "results": SzfbMatchSerializer(results, many=True).data,
                 "upcoming": SzfbMatchSerializer(upcoming, many=True).data,
+            }
+        )
+    
+class SzfbWatchNextMatchView(APIView):
+    def get(self, request, watch_id):
+        now = timezone.localtime()
+
+        watch = SzfbTeamWatch.objects.get(id=watch_id)
+
+        next_match = (
+            watch.matches.filter(match_type="upcoming")
+            .filter(
+                Q(match_date__gt=now.date()) |
+                Q(match_date=now.date(), match_time__gte=now.time())
+            )
+            .order_by("match_date", "match_time")
+            .first()
+        )
+
+        if not next_match:
+            return Response(
+                {
+                    "watch_id": watch.id,
+                    "next_match": None,
+                }
+            )
+
+        return Response(
+            {
+                "watch_id": watch.id,
+                "next_match": SzfbMatchSerializer(next_match).data,
             }
         )
