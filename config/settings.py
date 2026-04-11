@@ -35,6 +35,8 @@ INSTALLED_APPS = [
     "apps.documents",
     "apps.scraper",
     "apps.api",
+
+    "apps.guli",
 ]
 
 MIDDLEWARE = [
@@ -112,9 +114,18 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://178.104.54.84:4173",
+    "http://localhost:3000",
+
 
 ]
-
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = "smtp.m1.websupport.sk"
+EMAIL_PORT = 465
+EMAIL_HOST_USER = "guli@ludimus.sk"
+EMAIL_HOST_PASSWORD = "Heslo123."
+EMAIL_USE_SSL = True
+EMAIL_USE_TLS = False
+DEFAULT_FROM_EMAIL = "guli@ludimus.sk"
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",

@@ -21,6 +21,8 @@ urlpatterns = [
     path("api/admin/partners/", include("apps.partners.admin_urls")),
     path("api/admin/gallery/", include("apps.gallery.admin_urls")),
     path("api/public/szfb/", include("apps.scraper.urls")),
+
+    path("api/guli/", include("apps.guli.urls"))
 ]
 
 if settings.DEBUG:
