@@ -56,3 +56,4 @@ class ClubMembership(TimeStampedModel):
 
     def __str__(self):
         return f"{self.user} - {self.club} - {self.role}"
+    

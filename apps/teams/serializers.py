@@ -1,36 +1,34 @@
 from rest_framework import serializers
-from .models import Team, TeamMember
+from .models import Category, ClubSeason
 
 
-class TeamSerializer(serializers.ModelSerializer):
+class CategorySerializer(serializers.ModelSerializer):
     class Meta:
-        model = Team
-        fields = ["id", "name", "slug", "season", "is_active"]
+        model = Category
+        fields = "__all__"
 
 
-class TeamMemberSerializer(serializers.ModelSerializer):
-    team_name = serializers.CharField(source="team.name", read_only=True)
-    photo_url = serializers.SerializerMethodField()
-
+class CategoryBirthYearsSerializer(serializers.ModelSerializer):
     class Meta:
-        model = TeamMember
+        model = Category
         fields = [
             "id",
-            "first_name",
-            "last_name",
-            "role",
-            "position",
-            "jersey_number",
-            "bio",
-            "order",
-            "is_active",
-            "team_name",
-            "photo",
-            "photo_url",
+            "name",
+            "slug",
+            "season",
+            "birth_year_from",
+            "birth_year_to",
+            "coach_name",
+            "coach_email",
+            "coach_phone",
         ]
 
-    def get_photo_url(self, obj):
-        request = self.context.get("request")
-        if obj.photo and request:
-            return request.build_absolute_uri(obj.photo.url)
-        return None
+
+class ClubSeasonSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ClubSeason
+        fields = [
+            "id",
+            "club",
+            "season",
+        ]

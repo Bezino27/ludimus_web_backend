@@ -4,8 +4,13 @@ from apps.common.models import TimeStampedModel
 
 class Match(TimeStampedModel):
     club = models.ForeignKey("clubs.Club", on_delete=models.CASCADE, related_name="matches")
-    team = models.ForeignKey("teams.Team", on_delete=models.SET_NULL, null=True, blank=True, related_name="matches")
-
+    category = models.ForeignKey(
+        "teams.Category",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="matches"
+    )
     opponent = models.CharField(max_length=255)
     competition = models.CharField(max_length=255, blank=True)
     round_label = models.CharField(max_length=100, blank=True)
