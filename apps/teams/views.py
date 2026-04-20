@@ -1,7 +1,10 @@
 from rest_framework import generics
-from .models import Category
-from .serializers import CategorySerializer, CategoryBirthYearsSerializer
-
+from .models import Category, ClubSeason
+from .serializers import (
+    CategorySerializer,
+    CategoryBirthYearsSerializer,
+    ClubSeasonSerializer,
+)
 
 class ClubCategoryListView(generics.ListAPIView):
     serializer_class = CategorySerializer
@@ -23,4 +26,12 @@ class CategoryBirthYearsDetailView(generics.RetrieveAPIView):
             club__slug=self.kwargs["club_slug"],
             club__is_active=True,
             is_active=True,
+        )
+class ClubSeasonDetailView(generics.RetrieveAPIView):
+    serializer_class = ClubSeasonSerializer
+
+    def get_object(self):
+        return ClubSeason.objects.get(
+            club__slug=self.kwargs["club_slug"],
+            club__is_active=True,
         )
