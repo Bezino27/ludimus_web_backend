@@ -15,6 +15,7 @@ class Category(TimeStampedModel):
     birth_year_to = models.PositiveIntegerField()
     order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    description = models.TextField(blank=True)
     coach_name = models.CharField(max_length=150, blank=True)
     coach_email = models.EmailField(blank=True)
     coach_phone = models.CharField(max_length=30, blank=True)

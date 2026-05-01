@@ -16,6 +16,7 @@ class CategoryBirthYearsSerializer(serializers.ModelSerializer):
             "name",
             "slug",
             "season",
+            "description",
             "birth_year_from",
             "birth_year_to",
             "coach_name",

@@ -119,13 +119,13 @@ CORS_ALLOWED_ORIGINS = [
 
 ]
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "smtp.m1.websupport.sk"
-EMAIL_PORT = 465
-EMAIL_HOST_USER = "guli@ludimus.sk"
-EMAIL_HOST_PASSWORD = "Heslo123."
-EMAIL_USE_SSL = True
-EMAIL_USE_TLS = False
-DEFAULT_FROM_EMAIL = "guli@ludimus.sk"
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.m1.websupport.sk")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "465"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "guli@ludimus.sk")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "True") == "True"
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "False") == "True"
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
