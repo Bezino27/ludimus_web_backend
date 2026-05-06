@@ -4,7 +4,10 @@ from apps.scraper.services.szfb_sync import sync_competition_from_home_url
 
 
 class Command(BaseCommand):
-    help = "Načíta SZFB súťaž z home URL, uloží tabuľku a zápasy pre sledované tímy."
+    help = (
+        "Načíta SZFB súťaž z home URL, uloží tabuľku, zápasy "
+        "a produktivitu hráčov pre sledované tímy."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument("--url", required=True, type=str)

@@ -6,6 +6,7 @@ from apps.scraper.views import (
     SzfbWatchStandingsView,
     SzfbWatchUpcomingView,
     SzfbWatchNextMatchView,
+    SzfbWatchPlayerStatsView,
 )
 
 urlpatterns = [
@@ -15,5 +16,6 @@ urlpatterns = [
     path("watch/<int:watch_id>/results/", SzfbWatchResultsView.as_view(), name="szfb-watch-results"),
     path("watch/<int:watch_id>/upcoming/", SzfbWatchUpcomingView.as_view(), name="szfb-watch-upcoming"),
     path("watch/<int:watch_id>/next-match/", SzfbWatchNextMatchView.as_view(), name="szfb-watch-next-match"),
+    path("watch/<int:watch_id>/player-stats/", SzfbWatchPlayerStatsView.as_view(), name="szfb-watch-player-stats"),
 
 ]

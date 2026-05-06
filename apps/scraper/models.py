@@ -41,6 +41,7 @@ class SzfbTeamWatch(models.Model):
         related_name="watched_teams",
     )
     team_name = models.CharField(max_length=255)
+    competitor_id = models.PositiveIntegerField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
@@ -75,3 +76,36 @@ class SzfbMatch(models.Model):
 
     def __str__(self):
         return f"{self.watched_team.label} vs {self.opponent} ({self.match_type})"
+
+
+class SzfbPlayerStat(models.Model):
+    watched_team = models.ForeignKey(
+        SzfbTeamWatch,
+        on_delete=models.CASCADE,
+        related_name="player_stats",
+    )
+
+    rank = models.PositiveIntegerField()
+    player_name = models.CharField(max_length=255)
+    birth_year = models.PositiveIntegerField(null=True, blank=True)
+    team_short_name = models.CharField(max_length=50, blank=True, default="")
+    player_position = models.CharField(max_length=20, blank=True, default="")
+
+    games = models.PositiveIntegerField(default=0)
+    goals = models.PositiveIntegerField(default=0)
+    assists = models.PositiveIntegerField(default=0)
+    points = models.PositiveIntegerField(default=0)
+
+    points_avg = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+
+    esp = models.PositiveIntegerField(default=0)
+    ppp = models.PositiveIntegerField(default=0)
+    shp = models.PositiveIntegerField(default=0)
+    pim = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["rank"]
+        unique_together = ("watched_team", "rank", "player_name")
+
+    def __str__(self):
+        return f"{self.rank}. {self.player_name} - {self.points}b"

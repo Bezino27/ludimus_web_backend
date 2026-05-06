@@ -1,11 +1,14 @@
 import re
 import unicodedata
 from datetime import datetime
-from urllib.parse import urljoin
+from decimal import Decimal
+from urllib.parse import urlencode, urljoin
 
 import requests
 from bs4 import BeautifulSoup
 
+
+# # ZÁKLADNÉ NASTAVENIA
 
 BASE_URL = "https://www.szfb.sk"
 
@@ -18,42 +21,212 @@ HEADERS = {
 }
 
 
+# # POMOCNÉ FUNKCIE
+
 def normalize_spaces(value: str) -> str:
+    """
+    Vyčistí text zo stránky.
+    Z viacerých medzier, enterov a tabulátorov spraví jednu medzeru.
+    """
     return re.sub(r"\s+", " ", value or "").strip()
 
 
+COMMON_FIRST_NAMES = {
+    "adam",
+    "andrej",
+    "boris",
+    "david",
+    "dominik",
+    "erik",
+    "filip",
+    "jakub",
+    "jan",
+    "janko",
+    "jozef",
+    "juraj",
+    "ladislav",
+    "lukas",
+    "marek",
+    "martin",
+    "matej",
+    "matias",
+    "matus",
+    "michal",
+    "milan",
+    "miroslav",
+    "oliver",
+    "patrik",
+    "peter",
+    "richard",
+    "robert",
+    "roman",
+    "samuel",
+    "simon",
+    "stanislav",
+    "stefan",
+    "tomas",
+    "viktor",
+}
+
+
+def normalize_name_part(value: str) -> str:
+    return value[:1].upper() + value[1:].lower() if value else ""
+
+
+def normalize_name_key(value: str) -> str:
+    value = unicodedata.normalize("NFKD", value)
+    return value.encode("ascii", "ignore").decode("ascii").lower()
+
+
+def format_player_name(value: str, *, source_order: str = "auto") -> str:
+    """
+    Prevedie SZFB meno na čitateľný formát.
+    Napríklad: "KUBÍK RICHARD" alebo "Kubík Richard" -> "Richard Kubík".
+    """
+    value = normalize_spaces(value).replace(",", "")
+
+    if not value:
+        return ""
+
+    parts = value.split(" ")
+    should_flip = source_order == "surname_first"
+
+    if source_order == "auto" and len(parts) > 1:
+        first_part = normalize_name_key(parts[0])
+        second_part = normalize_name_key(parts[1]) if len(parts) == 2 else ""
+        should_flip = parts[0].isupper() or (
+            len(parts) == 2
+            and first_part not in COMMON_FIRST_NAMES
+            and second_part in COMMON_FIRST_NAMES
+        )
+
+    if len(parts) > 1 and should_flip:
+        parts = [*parts[1:], parts[0]]
+
+    return " ".join(normalize_name_part(part) for part in parts)
+
+
 def get_soup(url: str) -> BeautifulSoup:
+    """
+    Stiahne HTML stránku zo SZFB a vráti BeautifulSoup objekt,
+    s ktorým vieme ďalej čítať tabuľky, linky a text.
+    """
     response = requests.get(url, headers=HEADERS, timeout=30)
     response.raise_for_status()
     return BeautifulSoup(response.text, "lxml")
 
 
 def parse_date(text: str):
+    """
+    Skúsi premeniť textový dátum zo SZFB na Python date objekt.
+    Podporuje formáty napr. 06.05.2026 alebo 06.05.26.
+    """
     text = normalize_spaces(text)
+
     for fmt in ("%d.%m.%Y", "%d.%m.%y"):
         try:
             return datetime.strptime(text, fmt).date()
         except ValueError:
             pass
+
     return None
 
 
 def parse_time(text: str):
+    """
+    Skúsi premeniť čas zo SZFB na Python time objekt.
+    Napríklad 18:30.
+    """
     text = normalize_spaces(text)
+
     try:
         return datetime.strptime(text, "%H:%M").time()
     except ValueError:
         return None
 
 
+def parse_int(value: str, default: int = 0) -> int:
+    """
+    Bezpečne vytiahne celé číslo z textu.
+    Ak tam číslo nie je, vráti default.
+    """
+    value = normalize_spaces(value)
+    match = re.search(r"\d+", value)
+
+    if not match:
+        return default
+
+    try:
+        return int(match.group(0))
+    except ValueError:
+        return default
+
+
+def parse_decimal(value: str) -> Decimal:
+    """
+    Bezpečne prevedie desatinné číslo zo SZFB na Decimal.
+    SZFB používa čiarku, napr. 1,71, preto ju meníme na bodku.
+    """
+    value = normalize_spaces(value).replace(",", ".")
+
+    if not value:
+        return Decimal("0")
+
+    try:
+        return Decimal(value)
+    except Exception:
+        return Decimal("0")
+
+
 def slugify_competition_name(name: str) -> str:
+    """
+    Z názvu súťaže vytvorí URL slug.
+    Napríklad:
+    'Florbalová extraliga mužov' -> 'florbalova-extraliga-muzov'
+    """
     value = normalize_spaces(name).lower()
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     value = re.sub(r"[^a-z0-9]+", "-", value)
     return re.sub(r"-+", "-", value).strip("-")
 
 
+# # URL BUILDER PRE PRODUKTIVITU HRÁČOV
+
+def build_players_productivity_url(
+    competition_id: int,
+    competition_name: str,
+    competitor_id: int,
+    stats_type: str = "points",
+) -> str:
+    """
+    Poskladá URL na produktivitu hráčov konkrétneho tímu.
+
+    Výsledok bude napríklad:
+    https://www.szfb.sk/sk/stats/players/1164/florbalova-extraliga-muzov?StatsType=points&CompetitorID=669426
+    """
+    slug = slugify_competition_name(competition_name)
+
+    query = urlencode(
+        {
+            "StatsType": stats_type,
+            "CompetitorID": competitor_id,
+        }
+    )
+
+    return f"{BASE_URL}/sk/stats/players/{competition_id}/{slug}?{query}"
+
+
+# # INFO O SÚŤAŽI
+
 def extract_competition_info(home_url: str) -> dict:
+    """
+    Zo základnej SZFB home URL súťaže vytiahne:
+    - ID súťaže,
+    - názov súťaže,
+    - sezónu,
+    - URL tabuľky,
+    - URL programu a výsledkov.
+    """
     soup = get_soup(home_url)
 
     title_el = soup.find("h1")
@@ -101,7 +274,22 @@ def extract_competition_info(home_url: str) -> dict:
     }
 
 
+# # TABUĽKA SÚŤAŽE
+
 def fetch_standings(standings_url: str) -> list[dict]:
+    """
+    Zo stránky tabuľky vytiahne poradie tímov.
+
+    Vracia zoznam:
+    [
+        {
+            "position": 1,
+            "team_name": "...",
+            "played": 10,
+            "points": 25,
+        }
+    ]
+    """
     soup = get_soup(standings_url)
     rows = []
 
@@ -116,7 +304,11 @@ def fetch_standings(standings_url: str) -> list[dict]:
         position_text = normalize_spaces(cells[0].get_text(" ", strip=True))
 
         team_link = cells[1].find("a")
-        team_name = normalize_spaces(team_link.get_text(" ", strip=True)) if team_link else normalize_spaces(cells[1].get_text(" ", strip=True))
+        team_name = (
+            normalize_spaces(team_link.get_text(" ", strip=True))
+            if team_link
+            else normalize_spaces(cells[1].get_text(" ", strip=True))
+        )
 
         played_text = normalize_spaces(cells[2].get_text(" ", strip=True))
         points_text = normalize_spaces(cells[9].get_text(" ", strip=True))
@@ -139,8 +331,113 @@ def fetch_standings(standings_url: str) -> list[dict]:
 
     return rows
 
+
+# # PRODUKTIVITA HRÁČOV
+
+def fetch_player_productivity(players_url: str) -> list[dict]:
+    """
+    Zo stránky produktivity hráčov vytiahne hráčske štatistiky.
+
+    Dôležitá oprava:
+    SZFB pri niektorých hráčoch nezobrazuje poradie v prvom stĺpci.
+    Preto hráčov nevyhadzujeme podľa ranku zo stránky.
+
+    Postup:
+    1. načítame všetkých hráčov,
+    2. údaje vytiahneme podľa stĺpcov,
+    3. zoradíme ich podľa bodov od najvyššieho po najnižší,
+    4. rank vytvoríme sami.
+    """
+    soup = get_soup(players_url)
+    rows = []
+
+    table_rows = soup.select("table tbody tr")
+
+    def get_cell_text(cells, index: int) -> str:
+        """
+        Bezpečne vytiahne text z bunky tabuľky.
+        Ak bunka neexistuje, vráti prázdny string.
+        """
+        if index >= len(cells):
+            return ""
+
+        return normalize_spaces(cells[index].get_text(" ", strip=True))
+
+    for row in table_rows:
+        cells = row.find_all("td", recursive=False)
+
+        # Potrebujeme aspoň základné stĺpce po body:
+        # rank | meno | rok | tím | post | Z | G | A | B
+        #
+        # Nepoužívame len(cells) < 14, lebo niektoré ďalšie štatistiky
+        # môžu byť prázdne alebo sa štruktúra mierne zmení.
+        if len(cells) < 9:
+            continue
+
+        player_name = format_player_name(
+            get_cell_text(cells, 1),
+            source_order="surname_first",
+        )
+        birth_year_text = get_cell_text(cells, 2)
+        team_short_name = get_cell_text(cells, 3)
+        player_position = get_cell_text(cells, 4)
+
+        if not player_name:
+            continue
+
+        games = parse_int(get_cell_text(cells, 5))
+        goals = parse_int(get_cell_text(cells, 6))
+        assists = parse_int(get_cell_text(cells, 7))
+        points = parse_int(get_cell_text(cells, 8))
+
+        rows.append(
+            {
+                "rank": 0,
+                "player_name": player_name,
+                "birth_year": parse_int(birth_year_text, default=0) or None,
+                "team_short_name": team_short_name,
+                "player_position": player_position,
+                "games": games,
+                "goals": goals,
+                "assists": assists,
+                "points": points,
+                "points_avg": parse_decimal(get_cell_text(cells, 9)),
+                "esp": parse_int(get_cell_text(cells, 10)),
+                "ppp": parse_int(get_cell_text(cells, 11)),
+                "shp": parse_int(get_cell_text(cells, 12)),
+                "pim": parse_int(get_cell_text(cells, 13)),
+            }
+        )
+
+    # Zoradenie podľa produktivity.
+    # Najprv body, potom góly, potom asistencie, potom počet zápasov.
+    rows.sort(
+        key=lambda player: (
+            player["points"],
+            player["goals"],
+            player["assists"],
+            player["games"],
+        ),
+        reverse=True,
+    )
+
+    # Vlastné poradie, aby boli očíslovaní všetci hráči.
+    for index, player in enumerate(rows, start=1):
+        player["rank"] = index
+
+    return rows
+
+
+# # POMOCNÉ FUNKCIE PRE ZÁPASY
+
 def _extract_clean_lines(url: str) -> list[str]:
+    """
+    Staršia pomocná funkcia.
+    Vytiahne čisté textové riadky zo stránky.
+    Aktuálne ju nechávame, keby sme ju ešte potrebovali pri debugovaní.
+    """
     soup = get_soup(url)
+
     return [
         normalize_spaces(line)
         for line in soup.get_text("\n", strip=True).splitlines()
@@ -169,23 +466,31 @@ def _is_time(line: str) -> bool:
 
 
 def _clean_team_line(line: str) -> str:
+    """
+    Pomocná funkcia na čistenie názvov tímov.
+    Nechávame ju kvôli prípadným rozdielom v HTML SZFB.
+    """
     line = normalize_spaces(line)
 
-    # odstráni "Image: ..." úseky
+    # Odstráni "Image: ..." úseky.
     line = re.sub(r"Image:\s.*?(?=(?:\b[A-Z]{2,4}\b\s)|$)", " ", line)
 
-    # odstráni osamotené klubové skratky typu FCT, ATU, FKN, LID
+    # Odstráni osamotené klubové skratky typu FCT, ATU, FKN, LID.
     line = re.sub(r"\b[A-Z]{2,4}\b", " ", line)
 
-    # odstráni zvyšné nadbytočné čísla alebo značky na začiatku
+    # Odstráni zvyšné nadbytočné značky na začiatku.
     line = re.sub(r"^[^A-Za-zÁ-ž0-9]+", "", line)
 
-    line = normalize_spaces(line)
-    return line
+    return normalize_spaces(line)
 
 
 def _extract_team_name_from_cell(cell):
+    """
+    Zo zápasovej tabuľky vytiahne názov tímu.
+    SZFB často dáva plný názov do span.hidden-xs.
+    """
     hidden = cell.select_one("span.hidden-xs")
+
     if hidden:
         return normalize_spaces(hidden.get_text(" ", strip=True))
 
@@ -193,22 +498,50 @@ def _extract_team_name_from_cell(cell):
 
 
 def _extract_score_from_cell(cell):
+    """
+    Zo zápasovej tabuľky vytiahne výsledok.
+    Ak je zápas ešte neodohraný, vráti VS.
+    """
     results = cell.select("span.matchresult")
+
     if len(results) >= 2:
-        return f"{normalize_spaces(results[0].get_text())}:{normalize_spaces(results[1].get_text())}"
+        return (
+            f"{normalize_spaces(results[0].get_text())}:"
+            f"{normalize_spaces(results[1].get_text())}"
+        )
 
     text = normalize_spaces(cell.get_text(" ", strip=True))
+
     if "VS" in text.upper():
         return "VS"
 
     match = re.search(r"(\d+)\s*[-:]\s*(\d+)", text)
+
     if match:
         return f"{match.group(1)}:{match.group(2)}"
 
     return ""
 
 
+# # ZÁPASY
+
 def fetch_matches(results_url: str) -> list[dict]:
+    """
+    Zo stránky Program a výsledky vytiahne všetky zápasy v súťaži.
+
+    Vracia zoznam:
+    [
+        {
+            "match_type": "finished" alebo "upcoming",
+            "match_date": date alebo None,
+            "match_time": time alebo None,
+            "team1": "Domáci tím",
+            "team2": "Hosťujúci tím",
+            "venue": "Hala",
+            "result": "5:3" alebo "VS",
+        }
+    ]
+    """
     soup = get_soup(results_url)
     matches = []
 
@@ -237,26 +570,31 @@ def fetch_matches(results_url: str) -> list[dict]:
         venue = ""
 
         date_el = info_cell.select_one("div.match-date")
+
         if date_el:
             date_text = normalize_spaces(date_el.get_text(" ", strip=True))
             date_match = re.search(r"(\d{2}\.\d{2}\.\d{4})", date_text)
+
             if date_match:
                 date_value = parse_date(date_match.group(1))
 
         if not date_value:
             for div in info_cell.find_all("div"):
                 text = normalize_spaces(div.get_text(" ", strip=True))
+
                 if re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", text):
                     date_value = parse_date(text)
                     break
 
         for div in info_cell.find_all("div"):
             text = normalize_spaces(div.get_text(" ", strip=True))
+
             if _is_time(text):
                 time_value = parse_time(text)
                 break
 
         venue_el = info_cell.select_one("div.td-box")
+
         if venue_el:
             venue = normalize_spaces(venue_el.get_text(" ", strip=True))
 
@@ -278,6 +616,14 @@ def fetch_matches(results_url: str) -> list[dict]:
 
 
 def filter_matches_for_team(matches: list[dict], team_name: str) -> list[dict]:
+    """
+    Z celého zoznamu zápasov vyfiltruje iba zápasy sledovaného tímu.
+
+    Napríklad:
+    team_name = "FaBK ATU Košice"
+
+    Výsledkom budú iba zápasy, kde hrá ATU.
+    """
     team_name_normalized = normalize_spaces(team_name).lower()
     filtered = []
 
