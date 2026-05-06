@@ -9,8 +9,6 @@ from apps.homepage.models import HomepageSection
 from apps.homepage.serializers import HomepageSectionSerializer
 from apps.posts.models import Post
 from apps.posts.serializers import PostListSerializer
-from apps.matches.models import Match
-from apps.matches.serializers import MatchSerializer
 from apps.partners.models import Partner
 from apps.partners.serializers import PartnerSerializer
 from apps.pages.models import Page
@@ -40,15 +38,6 @@ class PublicHomeView(APIView):
             .order_by("-published_at", "-created_at")[:6]
         )
 
-        matches = (
-            Match.objects.filter(
-                club=club,
-                is_published=True,
-            )
-            .select_related("team", "club")
-            .order_by("-match_date")[:8]
-        )
-
         partners = Partner.objects.filter(
             club=club,
             is_active=True,
@@ -64,7 +53,6 @@ class PublicHomeView(APIView):
             "club": ClubSerializer(club, context={"request": request}).data,
             "sections": HomepageSectionSerializer(sections, many=True, context={"request": request}).data,
             "latest_posts": PostListSerializer(latest_posts, many=True, context={"request": request}).data,
-            "matches": MatchSerializer(matches, many=True, context={"request": request}).data,
             "partners": PartnerSerializer(partners, many=True, context={"request": request}).data,
             "menu_pages": PageSerializer(menu_pages, many=True, context={"request": request}).data,
         }

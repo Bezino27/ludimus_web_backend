@@ -6,7 +6,6 @@ class HomepageSection(TimeStampedModel):
     SECTION_TYPES = [
         ("hero", "Hero"),
         ("latest_posts", "Latest posts"),
-        ("matches", "Matches"),
         ("partners", "Partners"),
         ("gallery", "Gallery"),
         ("cta", "CTA"),

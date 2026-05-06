@@ -29,7 +29,6 @@ INSTALLED_APPS = [
     "apps.pages",
     "apps.homepage",
     "apps.teams",
-    "apps.matches",
     "apps.partners",
     "apps.gallery",
     "apps.documents",

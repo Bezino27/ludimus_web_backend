@@ -20,7 +20,7 @@ class Migration(migrations.Migration):
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
                 ('title', models.CharField(blank=True, max_length=255)),
-                ('section_type', models.CharField(choices=[('hero', 'Hero'), ('latest_posts', 'Latest posts'), ('matches', 'Matches'), ('partners', 'Partners'), ('gallery', 'Gallery'), ('cta', 'CTA'), ('custom_html', 'Custom HTML')], max_length=50)),
+                ('section_type', models.CharField(choices=[('hero', 'Hero'), ('latest_posts', 'Latest posts'), ('partners', 'Partners'), ('gallery', 'Gallery'), ('cta', 'CTA'), ('custom_html', 'Custom HTML')], max_length=50)),
                 ('is_active', models.BooleanField(default=True)),
                 ('order', models.PositiveIntegerField(default=0)),
                 ('config', models.JSONField(blank=True, default=dict)),

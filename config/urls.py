@@ -9,7 +9,6 @@ urlpatterns = [
     path("api/public/clubs/", include("apps.clubs.urls")),
     path("api/public/posts/", include("apps.posts.urls")),
     path("api/public/pages/", include("apps.pages.urls")),
-    path("api/public/matches/", include("apps.matches.urls")),
     path("api/public/partners/", include("apps.partners.urls")),
     path("api/public/homepage/", include("apps.homepage.urls")),
     path("api/public/", include("apps.api.urls")),
