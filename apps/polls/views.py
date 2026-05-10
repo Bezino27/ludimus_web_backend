@@ -1,0 +1,283 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import IntegrityError
+from django.db.models import Count, Q
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+
+from .models import Poll, PollOption, PollVote
+from .serializers import PollCreateSerializer, PollSerializer, PollVoteSerializer
+from .utils import (
+    POLL_VOTER_COOKIE_NAME,
+    get_or_create_voter_id,
+    get_user_agent_hash,
+    set_voter_cookie,
+)
+
+
+def build_poll_results_response_data(poll):
+    options = poll.options.annotate(
+        votes_count=Count("votes")
+    ).order_by("order", "id")
+
+    total_votes = PollVote.objects.filter(poll=poll).count()
+
+    results = []
+
+    for option in options:
+        votes_count = option.votes_count
+
+        if total_votes > 0:
+            percent = round((votes_count / total_votes) * 100, 2)
+        else:
+            percent = 0
+
+        results.append(
+            {
+                "id": option.id,
+                "text": option.text,
+                "votes": votes_count,
+                "percent": percent,
+            }
+        )
+
+    return {
+        "poll_id": poll.id,
+        "question": poll.question,
+        "description": poll.description,
+        "voting_open": poll.is_open_for_voting,
+        "starts_at": poll.starts_at,
+        "ends_at": poll.ends_at,
+        "total_votes": total_votes,
+        "options": results,
+    }
+
+
+def serialize_polls_with_voter_state(polls, request):
+    serializer = PollSerializer(polls, many=True)
+    data = serializer.data
+
+    voter_id = request.COOKIES.get(POLL_VOTER_COOKIE_NAME)
+    voted_poll_ids = set()
+
+    if voter_id:
+        voted_poll_ids = set(
+            PollVote.objects.filter(
+                poll__in=polls,
+                voter_id=voter_id,
+            ).values_list("poll_id", flat=True)
+        )
+
+    for item in data:
+        item["has_voted"] = item["id"] in voted_poll_ids
+
+    return data
+
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+def poll_list_create_view(request):
+    """
+    GET:
+    - vráti iba ankety, ktoré sú práve otvorené na hlasovanie
+
+    POST:
+    - vytvorí novú anketu
+    - povolené iba pre admina / staff používateľa
+    """
+
+    if request.method == "GET":
+        now = timezone.now()
+
+        polls = list(
+            Poll.objects.filter(
+                is_active=True,
+            )
+            .filter(
+                Q(starts_at__isnull=True) | Q(starts_at__lte=now),
+                Q(ends_at__isnull=True) | Q(ends_at__gte=now),
+            )
+            .prefetch_related("options")
+            .order_by("-created_at")[:2]
+        )
+
+        return Response(
+            serialize_polls_with_voter_state(polls, request),
+            status=status.HTTP_200_OK,
+        )
+
+    if request.method == "POST":
+        if not request.user.is_authenticated or not request.user.is_staff:
+            return Response(
+                {"detail": "Nemáš oprávnenie vytvoriť anketu."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = PollCreateSerializer(data=request.data)
+
+        if serializer.is_valid():
+            try:
+                poll = serializer.save()
+            except DjangoValidationError as error:
+                return Response(
+                    {"detail": error.messages},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            response_serializer = PollSerializer(poll)
+
+            return Response(
+                response_serializer.data,
+                status=status.HTTP_201_CREATED,
+            )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def poll_detail_view(request, poll_id):
+    """
+    Vráti detail jednej ankety + informáciu, či tento prehliadač už hlasoval.
+    """
+
+    poll = get_object_or_404(Poll, id=poll_id)
+
+    voter_id, voter_id_created = get_or_create_voter_id(request)
+
+    has_voted = PollVote.objects.filter(
+        poll=poll,
+        voter_id=voter_id,
+    ).exists()
+
+    serializer = PollSerializer(poll)
+
+    data = serializer.data
+    data["has_voted"] = has_voted
+
+    response = Response(data, status=status.HTTP_200_OK)
+
+    if voter_id_created:
+        set_voter_cookie(response, voter_id)
+
+    return response
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def poll_vote_view(request, poll_id):
+    """
+    Uloží hlas v ankete.
+    """
+
+    poll = get_object_or_404(Poll, id=poll_id)
+
+    if not poll.is_open_for_voting:
+        return Response(
+            {"detail": "V tejto ankete sa momentálne nedá hlasovať."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    voter_id, voter_id_created = get_or_create_voter_id(request)
+
+    serializer = PollVoteSerializer(
+        data=request.data,
+        context={"poll": poll},
+    )
+
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    option_id = serializer.validated_data["option_id"]
+    option = get_object_or_404(PollOption, id=option_id, poll=poll)
+
+    try:
+        PollVote.objects.create(
+            poll=poll,
+            option=option,
+            voter_id=voter_id,
+            user_agent_hash=get_user_agent_hash(request),
+        )
+    except IntegrityError:
+        response = Response(
+            {"detail": "V tejto ankete si už hlasoval."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+        if voter_id_created:
+            set_voter_cookie(response, voter_id)
+
+        return response
+    except DjangoValidationError as error:
+        return Response(
+            {"detail": error.messages},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    response = Response(
+        {
+            "message": "Hlas bol uložený.",
+            "has_voted": True,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+    if voter_id_created:
+        set_voter_cookie(response, voter_id)
+
+    return response
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def poll_results_view(request, poll_id):
+    """
+    Vráti výsledky konkrétnej ankety.
+    """
+
+    poll = get_object_or_404(Poll, id=poll_id)
+
+    return Response(
+        build_poll_results_response_data(poll),
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def latest_poll_result_view(request):
+    """
+    Vráti poslednú ukončenú anketu.
+
+    Za ukončenú berieme anketu, ktorá už začala a buď:
+    - je ručne vypnutá cez is_active=False,
+    - alebo jej ends_at je už v minulosti.
+
+    Budúce pripravené ankety sa tu nezobrazujú.
+    Aktuálne otvorené ankety sa tu tiež nezobrazujú.
+    """
+
+    now = timezone.now()
+
+    already_started = Q(starts_at__isnull=True) | Q(starts_at__lte=now)
+    manually_closed = Q(is_active=False)
+    ended_by_date = Q(ends_at__isnull=False, ends_at__lt=now)
+
+    poll = (
+        Poll.objects.filter(already_started)
+        .filter(manually_closed | ended_by_date)
+        .order_by("-ends_at", "-updated_at", "-created_at")
+        .first()
+    )
+
+    if not poll:
+        return Response(None, status=status.HTTP_200_OK)
+
+    return Response(
+        build_poll_results_response_data(poll),
+        status=status.HTTP_200_OK,
+    )

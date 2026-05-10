@@ -21,7 +21,10 @@ urlpatterns = [
     path("api/admin/gallery/", include("apps.gallery.admin_urls")),
     path("api/public/szfb/", include("apps.scraper.urls")),
 
-    path("api/guli/", include("apps.guli.urls"))
+    path("api/guli/", include("apps.guli.urls")),
+    path("api/polls/", include("apps.polls.urls")),
+    
+
 ]
 
 if settings.DEBUG:

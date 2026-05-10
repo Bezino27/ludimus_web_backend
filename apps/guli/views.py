@@ -1,5 +1,8 @@
 from django.core.mail import send_mail
 from rest_framework import generics
+from rest_framework.permissions import AllowAny, IsAdminUser
+from rest_framework.throttling import ScopedRateThrottle
+
 from .models import RecruitmentForm
 from .serializers import RecruitmentFormSerializer
 
@@ -7,6 +10,9 @@ from .serializers import RecruitmentFormSerializer
 class RecruitmentFormCreateView(generics.CreateAPIView):
     queryset = RecruitmentForm.objects.all()
     serializer_class = RecruitmentFormSerializer
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "recruitment_form"
 
     def perform_create(self, serializer):
         form = serializer.save()
@@ -31,9 +37,11 @@ class RecruitmentFormCreateView(generics.CreateAPIView):
 class RecruitmentFormListView(generics.ListAPIView):
     queryset = RecruitmentForm.objects.all()
     serializer_class = RecruitmentFormSerializer
+    permission_classes = [IsAdminUser]
 
 
 class RecruitmentFormDetailView(generics.RetrieveAPIView):
     queryset = RecruitmentForm.objects.all()
     serializer_class = RecruitmentFormSerializer
     lookup_field = "id"
+    permission_classes = [IsAdminUser]

@@ -36,6 +36,8 @@ INSTALLED_APPS = [
     "apps.api",
 
     "apps.guli",
+     "apps.polls",
+
 ]
 
 MIDDLEWARE = [
@@ -117,6 +119,7 @@ CORS_ALLOWED_ORIGINS = [
 
 
 ]
+CORS_ALLOW_CREDENTIALS = True
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.m1.websupport.sk")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "465"))
@@ -132,4 +135,10 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.AllowAny",
     ),
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.ScopedRateThrottle",
+    ),
+    "DEFAULT_THROTTLE_RATES": {
+        "recruitment_form": "5/hour",
+    },
 }
