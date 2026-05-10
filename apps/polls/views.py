@@ -12,7 +12,6 @@ from rest_framework.response import Response
 from .models import Poll, PollOption, PollVote
 from .serializers import PollCreateSerializer, PollSerializer, PollVoteSerializer
 from .utils import (
-    POLL_VOTER_COOKIE_NAME,
     get_ip_hash,
     get_or_create_voter_id,
     get_user_agent_hash,
@@ -61,11 +60,10 @@ def build_poll_results_response_data(poll):
     }
 
 
-def serialize_polls_with_voter_state(polls, request):
+def serialize_polls_with_voter_state(polls, voter_id):
     serializer = PollSerializer(polls, many=True)
     data = serializer.data
 
-    voter_id = request.COOKIES.get(POLL_VOTER_COOKIE_NAME)
     voted_poll_ids = set()
 
     if voter_id:
@@ -88,6 +86,7 @@ def poll_list_create_view(request):
     """
     GET:
     - vráti iba ankety, ktoré sú práve otvorené na hlasovanie
+    - zároveň vytvorí anonymnú voter_id cookie, ak ešte neexistuje
 
     POST:
     - vytvorí novú anketu
@@ -109,10 +108,17 @@ def poll_list_create_view(request):
             .order_by("-created_at")[:2]
         )
 
-        return Response(
-            serialize_polls_with_voter_state(polls, request),
+        voter_id, voter_id_created = get_or_create_voter_id(request)
+
+        response = Response(
+            serialize_polls_with_voter_state(polls, voter_id),
             status=status.HTTP_200_OK,
         )
+
+        if voter_id_created:
+            set_voter_cookie(response, voter_id)
+
+        return response
 
     if request.method == "POST":
         if not request.user.is_authenticated or not request.user.is_staff:
@@ -176,6 +182,10 @@ def poll_detail_view(request, poll_id):
 def poll_vote_view(request, poll_id):
     """
     Uloží hlas v ankete.
+
+    Duálna ochrana:
+    1. voter_id cookie = rovnaký prehliadač môže hlasovať iba raz
+    2. ip_hash limit = max. 6 hlasov z jednej IP adresy pre jednu anketu
     """
 
     poll = get_object_or_404(Poll, id=poll_id)
@@ -196,10 +206,31 @@ def poll_vote_view(request, poll_id):
     )
 
     if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        response = Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        if voter_id_created:
+            set_voter_cookie(response, voter_id)
+
+        return response
 
     option_id = serializer.validated_data["option_id"]
     option = get_object_or_404(PollOption, id=option_id, poll=poll)
+
+    already_voted_by_cookie = PollVote.objects.filter(
+        poll=poll,
+        voter_id=voter_id,
+    ).exists()
+
+    if already_voted_by_cookie:
+        response = Response(
+            {"detail": "V tejto ankete si už hlasoval."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+        if voter_id_created:
+            set_voter_cookie(response, voter_id)
+
+        return response
 
     ip_votes_count = PollVote.objects.filter(
         poll=poll,
@@ -241,10 +272,15 @@ def poll_vote_view(request, poll_id):
 
         return response
     except DjangoValidationError as error:
-        return Response(
+        response = Response(
             {"detail": error.messages},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+        if voter_id_created:
+            set_voter_cookie(response, voter_id)
+
+        return response
 
     response = Response(
         {
