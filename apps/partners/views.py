@@ -8,8 +8,13 @@ class ClubPartnerListView(generics.ListAPIView):
 
     def get_queryset(self):
         club_slug = self.kwargs["club_slug"]
-        return Partner.objects.filter(
-            club__slug=club_slug,
-            club__is_active=True,
-            is_active=True,
-        ).order_by("order", "name")
+
+        return (
+            Partner.objects.filter(
+                club__slug=club_slug,
+                club__is_active=True,
+                is_active=True,
+            )
+            .select_related("club")
+            .order_by("order", "name")
+        )

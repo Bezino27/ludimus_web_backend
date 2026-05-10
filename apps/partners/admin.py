@@ -6,3 +6,5 @@ from .models import Partner
 class PartnerAdmin(admin.ModelAdmin):
     list_display = ("name", "club", "tier", "order", "is_active")
     list_filter = ("club", "tier", "is_active")
+    search_fields = ("name", "club__name", "website", "logo_url")
+    list_editable = ("order", "is_active")

@@ -54,6 +54,28 @@ def hash_value(value):
     return hashlib.sha256(raw_value.encode("utf-8")).hexdigest()
 
 
+def get_client_ip(request):
+    """
+    Zistí IP adresu klienta z requestu.
+
+    Ak aplikácia beží za proxy, HTTP_X_FORWARDED_FOR môže obsahovať zoznam IP.
+    Vtedy berieme prvú adresu zo zoznamu.
+    """
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+
+    return request.META.get("REMOTE_ADDR", "")
+
+
+def get_ip_hash(request):
+    """
+    Vráti hash IP adresy bez ukladania čistej IP do databázy.
+    """
+    return hash_value(get_client_ip(request))
+
+
 def get_user_agent_hash(request):
     """
     Zoberie informáciu o prehliadači / zariadení a uloží ju ako hash.

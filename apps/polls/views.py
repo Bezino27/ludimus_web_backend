@@ -13,10 +13,14 @@ from .models import Poll, PollOption, PollVote
 from .serializers import PollCreateSerializer, PollSerializer, PollVoteSerializer
 from .utils import (
     POLL_VOTER_COOKIE_NAME,
+    get_ip_hash,
     get_or_create_voter_id,
     get_user_agent_hash,
     set_voter_cookie,
 )
+
+
+MAX_VOTES_PER_IP_PER_POLL = 6
 
 
 def build_poll_results_response_data(poll):
@@ -183,6 +187,8 @@ def poll_vote_view(request, poll_id):
         )
 
     voter_id, voter_id_created = get_or_create_voter_id(request)
+    ip_hash = get_ip_hash(request)
+    user_agent_hash = get_user_agent_hash(request)
 
     serializer = PollVoteSerializer(
         data=request.data,
@@ -195,12 +201,34 @@ def poll_vote_view(request, poll_id):
     option_id = serializer.validated_data["option_id"]
     option = get_object_or_404(PollOption, id=option_id, poll=poll)
 
+    ip_votes_count = PollVote.objects.filter(
+        poll=poll,
+        ip_hash=ip_hash,
+    ).count()
+
+    if ip_votes_count >= MAX_VOTES_PER_IP_PER_POLL:
+        response = Response(
+            {
+                "detail": (
+                    "Z tejto siete už bolo odoslaných maximum hlasov "
+                    "pre túto anketu."
+                )
+            },
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+        if voter_id_created:
+            set_voter_cookie(response, voter_id)
+
+        return response
+
     try:
         PollVote.objects.create(
             poll=poll,
             option=option,
             voter_id=voter_id,
-            user_agent_hash=get_user_agent_hash(request),
+            ip_hash=ip_hash,
+            user_agent_hash=user_agent_hash,
         )
     except IntegrityError:
         response = Response(
