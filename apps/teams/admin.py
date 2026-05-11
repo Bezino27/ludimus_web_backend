@@ -19,6 +19,7 @@ class CategoryAdmin(admin.ModelAdmin):
         "name",
         "club",
         "season",
+        "category_subname",
         "birth_year_from",
         "birth_year_to",
         "coach_name",
@@ -26,6 +27,14 @@ class CategoryAdmin(admin.ModelAdmin):
         "is_active",
     )
     list_filter = ("club", "season", "is_active")
-    search_fields = ("name", "slug", "club__name", "coach_name", "coach_email")
+    search_fields = (
+        "name",
+        "slug",
+        "club__name",
+        "season",
+        "category_subname",
+        "coach_name",
+        "coach_email",
+    )
     ordering = ("club", "order", "name")
     prepopulated_fields = {"slug": ("name",)}
