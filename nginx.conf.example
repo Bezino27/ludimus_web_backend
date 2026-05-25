@@ -1,20 +1,82 @@
+log_format upstream_timing
+    '$remote_addr - $host "$request" $status $body_bytes_sent '
+    'rt=$request_time urt=$upstream_response_time '
+    'uaddr="$upstream_addr" ref="$http_referer" ua="$http_user_agent"';
+
+upstream atu_frontend {
+    server 127.0.0.1:3000;
+}
+
+upstream ludimus_backend {
+    server 127.0.0.1:8000;
+}
+
+upstream ludimus_admin_web {
+    server 127.0.0.1:4173;
+}
+
 server {
     listen 80;
-    server_name 178.104.54.84;
+    server_name atukosice.sk www.atukosice.sk;
+
+    access_log /var/log/nginx/atukosice.access.log upstream_timing;
+    error_log /var/log/nginx/atukosice.error.log warn;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "";
+
+    location /_next/static/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        proxy_pass http://atu_frontend;
+    }
+
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        proxy_pass http://atu_frontend;
+    }
 
     location /media/ {
+        add_header Cache-Control "public, max-age=604800, stale-while-revalidate=86400" always;
         alias /var/www/ludimus_web_backend/media/;
+        try_files $uri =404;
     }
 
     location /static/ {
+        add_header Cache-Control "public, max-age=604800, stale-while-revalidate=86400" always;
         alias /var/www/ludimus_web_backend/staticfiles/;
+        try_files $uri =404;
+    }
+
+    location /api/ {
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_pass http://ludimus_backend/api/;
+    }
+
+    location /backend-api/ {
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_pass http://ludimus_backend/api/;
+    }
+
+    location /admin/ {
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_pass http://ludimus_backend/admin/;
     }
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_pass http://atu_frontend;
     }
 }

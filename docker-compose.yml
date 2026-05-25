@@ -7,6 +7,9 @@ services:
     container_name: ludimus_backend
     env_file:
       - .env
+    environment:
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
+      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-60}
     ports:
       - "8000:8000"
     volumes:

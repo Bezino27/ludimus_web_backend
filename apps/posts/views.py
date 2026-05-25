@@ -8,7 +8,7 @@ class ClubPostListView(generics.ListAPIView):
 
     def get_queryset(self):
         club_slug = self.kwargs["club_slug"]
-        return (
+        queryset = (
             Post.objects.filter(
                 club__slug=club_slug,
                 club__is_active=True,
@@ -17,6 +17,18 @@ class ClubPostListView(generics.ListAPIView):
             .select_related("club", "category", "author")
             .order_by("-published_at", "-created_at")
         )
+
+        limit = self.request.query_params.get("limit")
+
+        if limit:
+            try:
+                limit_value = min(max(int(limit), 1), 50)
+            except ValueError:
+                limit_value = 50
+
+            return queryset[:limit_value]
+
+        return queryset
 
 
 class ClubPostDetailView(generics.RetrieveAPIView):
