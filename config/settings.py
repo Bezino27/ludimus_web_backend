@@ -118,9 +118,10 @@ CORS_ALLOWED_ORIGINS = [
     "http://178.104.54.84:3000",
     "http://178.104.54.84",
     "http://localhost:3000",
-
-
+    "https://www.atukosice.sk",
+    "https://atukosice.sk",
 ]
+
 CORS_ALLOW_CREDENTIALS = True
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.m1.websupport.sk")
