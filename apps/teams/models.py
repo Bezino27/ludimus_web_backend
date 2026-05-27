@@ -26,6 +26,20 @@ class Category(TimeStampedModel):
     coach_email = models.EmailField(blank=True)
     coach_phone = models.CharField(max_length=30, blank=True)
 
+    league_name = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+        help_text="Názov ligy zobrazovaný na webe, napr. Slovenská florbalová extraliga."
+    )
+
+    hero_image = models.ImageField(
+        upload_to="categories/hero/",
+        blank=True,
+        null=True,
+        help_text="Hlavná fotka kategórie zobrazovaná v hero sekcii na webe."
+    )    
+
     class Meta:
         unique_together = ("club", "slug", "season")
         ordering = ["order", "name"]

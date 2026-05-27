@@ -18,9 +18,9 @@ def format_display_years(category):
 
     return f"{min_year}-{max_year}"
 
-
 class CategorySerializer(serializers.ModelSerializer):
     display_years = serializers.SerializerMethodField()
+    hero_image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Category
@@ -34,6 +34,8 @@ class CategorySerializer(serializers.ModelSerializer):
             "birth_year_to",
             "category_subname",
             "display_years",
+            "league_name",
+            "hero_image_url",
             "order",
             "is_active",
             "coach_name",
@@ -44,9 +46,20 @@ class CategorySerializer(serializers.ModelSerializer):
     def get_display_years(self, obj):
         return format_display_years(obj)
 
+    def get_hero_image_url(self, obj):
+        request = self.context.get("request")
+
+        if obj.hero_image:
+            if request:
+                return request.build_absolute_uri(obj.hero_image.url)
+            return obj.hero_image.url
+
+        return None
+
 
 class CategoryBirthYearsSerializer(serializers.ModelSerializer):
     display_years = serializers.SerializerMethodField()
+    hero_image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Category
@@ -59,6 +72,8 @@ class CategoryBirthYearsSerializer(serializers.ModelSerializer):
             "birth_year_to",
             "category_subname",
             "display_years",
+            "league_name",
+            "hero_image_url",
             "coach_name",
             "coach_email",
             "coach_phone",
@@ -67,6 +82,15 @@ class CategoryBirthYearsSerializer(serializers.ModelSerializer):
     def get_display_years(self, obj):
         return format_display_years(obj)
 
+    def get_hero_image_url(self, obj):
+        request = self.context.get("request")
+
+        if obj.hero_image:
+            if request:
+                return request.build_absolute_uri(obj.hero_image.url)
+            return obj.hero_image.url
+
+        return None
 
 class ClubSeasonSerializer(serializers.ModelSerializer):
     class Meta:

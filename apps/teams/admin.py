@@ -20,6 +20,7 @@ class CategoryAdmin(admin.ModelAdmin):
         "club",
         "season",
         "category_subname",
+        "league_name",
         "birth_year_from",
         "birth_year_to",
         "coach_name",
@@ -33,6 +34,7 @@ class CategoryAdmin(admin.ModelAdmin):
         "club__name",
         "season",
         "category_subname",
+        "league_name",
         "coach_name",
         "coach_email",
     )
