@@ -31,12 +31,12 @@ INSTALLED_APPS = [
     "apps.teams",
     "apps.partners",
     "apps.gallery",
-    "apps.documents",
     "apps.scraper",
     "apps.api",
 
     "apps.guli",
-     "apps.polls",
+    "apps.polls",
+    "apps.club_info",
 
 ]
 
