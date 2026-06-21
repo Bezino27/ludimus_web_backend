@@ -4,8 +4,21 @@ from .models import Club, ClubMembership
 
 @admin.register(Club)
 class ClubAdmin(admin.ModelAdmin):
-    list_display = ("name", "slug", "email", "city", "is_active")
-    search_fields = ("name", "slug", "email", "city")
+    fields = (
+        "name",
+        "slug",
+        "short_name",
+        "description",
+        "logo",
+        "cover_image",
+        "primary_color",
+        "secondary_color",
+        "accent_color",
+    )
+    list_display = ("name", "slug", "short_name", "is_active")
+    list_filter = ("is_active",)
+    list_editable = ("is_active",)
+    search_fields = ("name", "slug", "short_name")
     prepopulated_fields = {"slug": ("name",)}
 
 

@@ -1,10 +1,11 @@
-from django.utils import timezone
+from django.db.models import Prefetch
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 
 from apps.clubs.models import Club
 from apps.clubs.serializers import ClubSerializer
+from apps.club_info.models import ClubLink
 from apps.homepage.models import HomepageSection
 from apps.homepage.serializers import HomepageSectionSerializer
 from apps.posts.models import Post
@@ -19,7 +20,19 @@ class PublicHomeView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, club_slug):
-        club = Club.objects.filter(slug=club_slug, is_active=True).first()
+        club = (
+            Club.objects.filter(slug=club_slug, is_active=True)
+            .prefetch_related(
+                Prefetch(
+                    "links",
+                    queryset=ClubLink.objects.filter(is_active=True).order_by(
+                        "order",
+                        "title",
+                    ),
+                )
+            )
+            .first()
+        )
 
         if not club:
             return Response({"detail": "Klub neexistuje."}, status=404)

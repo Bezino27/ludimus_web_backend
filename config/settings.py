@@ -37,7 +37,6 @@ INSTALLED_APPS = [
     "apps.guli",
     "apps.polls",
     "apps.club_info",
-
 ]
 
 MIDDLEWARE = [
@@ -80,6 +79,7 @@ DATABASES = {
         "PORT": os.getenv("DB_PORT"),
     }
 }
+
 AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
@@ -112,8 +112,6 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://localhost:5173",
     "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
     "http://178.104.54.84:4173",
     "http://178.104.54.84:3000",
     "http://178.104.54.84",
@@ -122,7 +120,18 @@ CORS_ALLOWED_ORIGINS = [
     "https://atukosice.sk",
 ]
 
+CSRF_TRUSTED_ORIGINS = [
+    "https://atukosice.sk",
+    "https://www.atukosice.sk",
+    "http://178.104.54.84",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 CORS_ALLOW_CREDENTIALS = True
+
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND",
     "django.core.mail.backends.smtp.EmailBackend",
@@ -135,6 +144,7 @@ EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "True") == "True"
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "False") == "True"
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "5"))
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",

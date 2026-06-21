@@ -16,18 +16,6 @@ class Club(TimeStampedModel):
     primary_color = models.CharField(max_length=20, default="#000000")
     secondary_color = models.CharField(max_length=20, default="#ffffff")
     accent_color = models.CharField(max_length=20, default="#D32F2F")
-
-    email = models.EmailField(blank=True)
-    phone = models.CharField(max_length=50, blank=True)
-    address = models.CharField(max_length=255, blank=True)
-    city = models.CharField(max_length=100, blank=True)
-
-    website_url = models.URLField(blank=True)
-    facebook_url = models.URLField(blank=True)
-    instagram_url = models.URLField(blank=True)
-    youtube_url = models.URLField(blank=True)
-
-    domain = models.CharField(max_length=255, blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:

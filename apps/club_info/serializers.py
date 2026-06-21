@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import ContactInfo, ClubDocument
+from .models import ContactInfo, ClubDocument, ClubLink
 
 
 class ContactInfoSerializer(serializers.ModelSerializer):
@@ -57,5 +57,33 @@ class ClubDocumentSerializer(serializers.ModelSerializer):
 
         if obj.file:
             return obj.file.url
+
+        return None
+
+
+class ClubLinkSerializer(serializers.ModelSerializer):
+    logo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ClubLink
+        fields = [
+            "id",
+            "title",
+            "url",
+            "icon_type",
+            "logo",
+            "logo_url",
+            "order",
+            "is_active",
+        ]
+
+    def get_logo_url(self, obj):
+        request = self.context.get("request")
+
+        if obj.logo and request:
+            return request.build_absolute_uri(obj.logo.url)
+
+        if obj.logo:
+            return obj.logo.url
 
         return None

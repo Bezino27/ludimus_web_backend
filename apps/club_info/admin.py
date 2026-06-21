@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ContactInfo, ClubDocument
+from .models import ContactInfo, ClubDocument, ClubLink
 
 
 @admin.register(ContactInfo)
@@ -16,3 +16,12 @@ class ClubDocumentAdmin(admin.ModelAdmin):
     search_fields = ("title", "club__name")
     readonly_fields = ("created_at", "updated_at")
     ordering = ("order", "title")
+
+
+@admin.register(ClubLink)
+class ClubLinkAdmin(admin.ModelAdmin):
+    list_display = ("title", "club", "url", "icon_type", "order", "is_active")
+    list_filter = ("club", "icon_type", "is_active")
+    search_fields = ("title", "url", "club__name")
+    ordering = ("club", "order", "title")
+    fields = ("club", "title", "url", "icon_type", "logo", "order", "is_active")

@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from django.db import models
 from apps.clubs.models import Club
 
@@ -61,3 +63,62 @@ class ClubDocument(models.Model):
 
     def __str__(self):
         return f"{self.title} - {self.club.name}"
+
+
+class ClubLink(models.Model):
+    club = models.ForeignKey(
+        Club,
+        on_delete=models.CASCADE,
+        related_name="links",
+    )
+    title = models.CharField(max_length=100)
+    url = models.URLField()
+    icon_type = models.CharField(
+        max_length=40,
+        blank=True,
+        default="",
+        help_text="Ak necháš prázdne, typ ikonky sa automaticky určí podľa URL.",
+    )
+    logo = models.FileField(upload_to="clubs/links/", blank=True, null=True)
+    order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["order", "title"]
+        verbose_name = "Klubový odkaz"
+        verbose_name_plural = "Klubové odkazy"
+
+    def __str__(self):
+        return f"{self.club.name} - {self.title}"
+
+    def save(self, *args, **kwargs):
+        if not self.icon_type:
+            self.icon_type = self.detect_icon_type(self.url)
+
+        super().save(*args, **kwargs)
+
+    @staticmethod
+    def detect_icon_type(url):
+        hostname = (urlparse(url).hostname or "").lower()
+
+        if hostname.startswith("www."):
+            hostname = hostname[4:]
+
+        if hostname.endswith("instagram.com"):
+            return "instagram"
+        if hostname.endswith("facebook.com") or hostname.endswith("fb.com"):
+            return "facebook"
+        if hostname.endswith("youtube.com") or hostname.endswith("youtu.be"):
+            return "youtube"
+        if hostname.endswith("tiktok.com"):
+            return "tiktok"
+        if hostname.endswith("flickr.com"):
+            return "flickr"
+        if hostname.endswith("szfb.sk") or hostname.endswith("florbalnet.sk"):
+            return "szfb"
+        if hostname.endswith("florbalexpert.sk") or hostname.endswith("florbalexpert.cz"):
+            return "florbal_expert"
+        if hostname.endswith("ludimus.sk"):
+            return "ludimus"
+
+        return "website"
