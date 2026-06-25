@@ -41,6 +41,7 @@ class ContactInfo(models.Model):
     def __str__(self):
         return f"Kontakt - {self.club.name}"
 
+
 class ClubDocument(models.Model):
     club = models.ForeignKey(
         Club,

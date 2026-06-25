@@ -20,6 +20,7 @@ class PageSectionSerializer(serializers.ModelSerializer):
 
 class PageSerializer(serializers.ModelSerializer):
     club_slug = serializers.CharField(source="club.slug", read_only=True)
+    public_path = serializers.CharField(source="get_public_path", read_only=True)
     sections = serializers.SerializerMethodField()
 
     class Meta:
@@ -35,6 +36,9 @@ class PageSerializer(serializers.ModelSerializer):
             "show_in_header",
             "show_in_footer",
             "navigation_order",
+            "menu_group",
+            "menu_group_title",
+            "public_path",
             "meta_title",
             "meta_description",
             "og_image",

@@ -25,6 +25,7 @@ class AdminPageSectionSerializer(serializers.ModelSerializer):
 
 class AdminPageSerializer(serializers.ModelSerializer):
     club_name = serializers.CharField(source="club.name", read_only=True)
+    public_path = serializers.CharField(source="get_public_path", read_only=True)
 
     class Meta:
         model = Page
@@ -41,13 +42,16 @@ class AdminPageSerializer(serializers.ModelSerializer):
             "show_in_header",
             "show_in_footer",
             "navigation_order",
+            "menu_group",
+            "menu_group_title",
+            "public_path",
             "meta_title",
             "meta_description",
             "og_image",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at", "public_path"]
 
     def validate_club(self, club):
         request = self.context["request"]

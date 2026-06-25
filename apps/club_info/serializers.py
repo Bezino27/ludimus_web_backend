@@ -1,5 +1,10 @@
 from rest_framework import serializers
-from .models import ContactInfo, ClubDocument, ClubLink
+
+from .models import (
+    ContactInfo,
+    ClubDocument,
+    ClubLink,
+)
 
 
 class ContactInfoSerializer(serializers.ModelSerializer):
@@ -33,7 +38,8 @@ class ContactInfoSerializer(serializers.ModelSerializer):
             "slug": obj.club.slug,
             "short_name": getattr(obj.club, "short_name", ""),
         }
-    
+
+
 class ClubDocumentSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
 

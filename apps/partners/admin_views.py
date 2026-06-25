@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 
 from .models import Partner
+from .revalidation import revalidate_partner_paths
 from .admin_serializers import AdminPartnerSerializer
 from apps.clubs.models import ClubMembership
 from apps.common.permissions import user_has_club_role, EDITOR_ROLES
@@ -47,15 +48,19 @@ class AdminPartnerViewSet(viewsets.ModelViewSet):
         club = serializer.validated_data["club"]
         if not user_has_club_role(self.request.user, club, EDITOR_ROLES):
             raise PermissionDenied("Nemáš oprávnenie vytvárať partnerov pre tento klub.")
-        serializer.save()
+        partner = serializer.save()
+        revalidate_partner_paths(partner, reason="Partner created via admin API")
 
     def perform_update(self, serializer):
         instance = self.get_object()
         if not user_has_club_role(self.request.user, instance.club, EDITOR_ROLES):
             raise PermissionDenied("Nemáš oprávnenie upravovať tohto partnera.")
-        serializer.save()
+        partner = serializer.save()
+        revalidate_partner_paths(partner, reason="Partner updated via admin API")
 
     def perform_destroy(self, instance):
         if not user_has_club_role(self.request.user, instance.club, EDITOR_ROLES):
             raise PermissionDenied("Nemáš oprávnenie zmazať tohto partnera.")
+        partner = instance
         instance.delete()
+        revalidate_partner_paths(partner, reason="Partner deleted via admin API")

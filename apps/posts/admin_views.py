@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 
 from .models import Post
+from .revalidation import revalidate_post_paths
 from .admin_serializers import AdminPostSerializer
 from apps.clubs.models import ClubMembership
 from apps.common.permissions import user_has_club_role, EDITOR_ROLES
@@ -51,18 +52,27 @@ class AdminPostViewSet(viewsets.ModelViewSet):
         club = serializer.validated_data["club"]
         if not user_has_club_role(self.request.user, club, EDITOR_ROLES):
             raise PermissionDenied("Nemáš oprávnenie vytvárať články pre tento klub.")
-        serializer.save(author=self.request.user)
+        post = serializer.save(author=self.request.user)
+        revalidate_post_paths(post, reason="Post created via admin API")
 
     def perform_update(self, serializer):
         instance = self.get_object()
         if not user_has_club_role(self.request.user, instance.club, EDITOR_ROLES):
             raise PermissionDenied("Nemáš oprávnenie upravovať tento článok.")
-        serializer.save()
+        old_slug = instance.slug
+        post = serializer.save()
+        revalidate_post_paths(
+            post,
+            reason="Post updated via admin API",
+            old_slug=old_slug,
+        )
 
     def perform_destroy(self, instance):
         if not user_has_club_role(self.request.user, instance.club, EDITOR_ROLES):
             raise PermissionDenied("Nemáš oprávnenie zmazať tento článok.")
+        post = instance
         instance.delete()
+        revalidate_post_paths(post, reason="Post deleted via admin API")
 
 
 

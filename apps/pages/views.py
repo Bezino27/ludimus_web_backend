@@ -58,12 +58,40 @@ class ClubPageNavigationView(APIView):
                 "slug": page.slug,
                 "page_type": page.page_type,
                 "navigation_order": page.navigation_order,
+                "menu_group": page.menu_group,
+                "menu_group_title": page.menu_group_title,
+                "url": page.get_public_path(),
             }
 
-        header_pages = [map_page(page) for page in pages if page.show_in_header]
-        footer_pages = [map_page(page) for page in pages if page.show_in_footer]
+        main_pages = [
+            map_page(page)
+            for page in pages
+            if page.menu_group == "main"
+            or (page.show_in_header and page.menu_group == "hidden")
+        ]
+        youth_pages = [map_page(page) for page in pages if page.menu_group == "youth"]
+        cta_page = next((map_page(page) for page in pages if page.menu_group == "cta"), None)
+        footer_pages = [
+            map_page(page)
+            for page in pages
+            if page.show_in_footer or page.menu_group == "footer"
+        ]
+
+        dropdowns = []
+
+        if youth_pages:
+            dropdowns.append({
+                "title": youth_pages[0].get("menu_group_title") or "Mládež",
+                "group": "youth",
+                "items": youth_pages,
+            })
 
         return Response({
-            "header_pages": header_pages,
+            "main": main_pages,
+            "dropdowns": dropdowns,
+            "cta": cta_page,
+            "footer": footer_pages,
+            "header": main_pages,
+            "header_pages": main_pages,
             "footer_pages": footer_pages,
         })

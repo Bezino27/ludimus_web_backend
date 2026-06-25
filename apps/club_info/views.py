@@ -23,6 +23,7 @@ def public_contact_detail(request, club_slug):
     serializer = ContactInfoSerializer(contact, context={"request": request})
     return Response(serializer.data)
 
+
 @api_view(["GET"])
 def public_documents_list(request, club_slug):
     documents = (
