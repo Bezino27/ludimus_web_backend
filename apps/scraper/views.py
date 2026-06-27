@@ -99,7 +99,11 @@ class SzfbWatchDashboardView(APIView):
                 "standings": SzfbStandingRowSerializer(standings, many=True).data,
                 "results": SzfbMatchSerializer(results, many=True).data,
                 "upcoming": SzfbMatchSerializer(upcoming, many=True).data,
-                "player_stats": SzfbPlayerStatSerializer(player_stats, many=True).data,
+                "player_stats": SzfbPlayerStatSerializer(
+                                                            player_stats,
+                                                            many=True,
+                                                            context={"request": request},
+                                                        ).data
             }
         )
 

@@ -80,16 +80,19 @@ SECTION_CHOICES_BY_PAGE_TYPE = {
         "gallery",
         "contact",
         "documents",
+        "custom_documents",
         "links",
+        "custom_links",
     ],
     "custom": [
         "hero",
         "custom_text",
-        "about_text",
-        "gallery",
         "contact",
+        "gallery",
         "documents",
+        "custom_documents",
         "links",
+        "custom_links",
     ],
 }
 
@@ -101,6 +104,7 @@ class Page(TimeStampedModel):
         ("contact", "Kontakt"),
         ("recruitment", "Nábor / Pridaj sa"),
         ("category", "Kategória tímu"),
+        ("team_category", "Kategória tímu"),
         ("articles", "Články"),
         ("custom", "Vlastná stránka"),
         ("standard", "Štandardná stránka"),
@@ -137,6 +141,7 @@ class Page(TimeStampedModel):
     show_in_header = models.BooleanField(default=False)
     show_in_footer = models.BooleanField(default=False)
     navigation_order = models.PositiveIntegerField(default=0)
+
     menu_group = models.CharField(
         max_length=20,
         choices=MENU_GROUP_CHOICES,
@@ -169,6 +174,15 @@ class Page(TimeStampedModel):
         if self.is_homepage or self.page_type == "home" or self.slug == "home":
             return "/"
 
+        if self.page_type == "about" or self.slug in {"o-klube", "about"}:
+            return "/o-klube"
+
+        if self.page_type == "contact" or self.slug == "kontakt":
+            return "/kontakt"
+
+        if self.page_type == "recruitment" or self.slug in {"pridaj_sa", "pridaj-sa"}:
+            return "/pridaj_sa"
+
         category_slugs = {
             "muzi",
             "pripravka",
@@ -181,11 +195,11 @@ class Page(TimeStampedModel):
         if self.page_type in {"category", "team_category"} or self.slug in category_slugs:
             return f"/kategorie/{self.slug}"
 
-        if self.slug in {"pridaj_sa", "pridaj-sa"}:
-            return "/pridaj_sa"
-
         if self.slug == "clanky" or self.page_type == "articles":
             return "/clanky"
+
+        if self.page_type == "custom":
+            return f"/stranka/{self.slug}"
 
         return f"/{self.slug}"
 
@@ -210,9 +224,12 @@ class PageSection(TimeStampedModel):
         ("team_categories", "Kategórie tímov"),
         ("faq", "Časté otázky"),
         ("trainings", "Tréningy"),
+
         ("links", "Klubové odkazy"),
+        ("custom_links", "Vlastné odkazy"),
         ("contact", "Kontakt"),
-        ("documents", "Dokumenty"),
+        ("documents", "Klubové dokumenty"),
+        ("custom_documents", "Vlastné dokumenty"),
         ("gallery", "Galéria"),
         ("achievements", "Úspechy"),
         ("custom_text", "Vlastný text"),
@@ -237,11 +254,51 @@ class PageSection(TimeStampedModel):
     pre_title = models.CharField(max_length=120, blank=True)
     title = models.CharField(max_length=160, blank=True)
 
+    content = models.TextField(
+        blank=True,
+        help_text="Obsah pre textové sekcie, napr. Vlastný text.",
+    )
+
+    image = models.ImageField(
+        upload_to="pages/sections/images/",
+        blank=True,
+        null=True,
+        help_text="Voliteľný obrázok/banner najmä pre Hero sekciu.",
+    )
+
+    url = models.CharField(
+        max_length=500,
+        blank=True,
+        help_text=(
+            "Staršie pole pre jednoduchý odkaz. "
+            "Pre viac vlastných odkazov používaj položky sekcie."
+        ),
+    )
+
+    file = models.FileField(
+        upload_to="pages/sections/",
+        blank=True,
+        null=True,
+        help_text=(
+            "Staršie pole pre jeden súbor. "
+            "Pre viac vlastných dokumentov používaj položky sekcie."
+        ),
+    )
+
     order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
     hide_when_empty = models.BooleanField(default=False)
 
-    config = models.JSONField(default=dict, blank=True)
+    config = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            'Voliteľné nastavenia vo formáte JSON. '
+            'Pre klubové dokumenty napr. {"document_ids": [1, 2, 3]}. '
+            'Pre klubové odkazy napr. {"link_ids": [1, 4, 7]}. '
+            'Pre vlastné dokumenty a vlastné odkazy používaj položky sekcie.'
+        ),
+    )
 
     class Meta:
         ordering = ["order", "id"]
@@ -266,6 +323,95 @@ class PageSection(TimeStampedModel):
 
     def __str__(self):
         return f"{self.page.title} - {self.get_section_type_display()}"
+
+    def save(self, *args, **kwargs):
+        if self.section_type not in {"documents", "custom_documents"}:
+            self.file = None
+
+        if self.section_type != "hero":
+            self.image = None
+
+        if self.section_type not in {"links", "custom_links"}:
+            self.url = ""
+
+        super().save(*args, **kwargs)
+
+
+class PageSectionItem(TimeStampedModel):
+    section = models.ForeignKey(
+        PageSection,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+
+    title = models.CharField(max_length=160)
+
+    url = models.CharField(
+        max_length=500,
+        blank=True,
+        help_text="Používa sa pri sekcii Vlastné odkazy.",
+    )
+
+    file = models.FileField(
+        upload_to="pages/sections/items/",
+        blank=True,
+        null=True,
+        help_text="Používa sa pri sekcii Vlastné dokumenty.",
+    )
+
+    order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["order", "id"]
+        verbose_name = "Položka sekcie"
+        verbose_name_plural = "Položky sekcií"
+
+    def clean(self):
+        super().clean()
+
+        if not self.section_id:
+            return
+
+        section_type = self.section.section_type
+
+        if section_type == "custom_documents":
+            if not self.file:
+                raise ValidationError({"file": "Pri vlastnom dokumente nahraj súbor."})
+            if self.url:
+                raise ValidationError({
+                    "url": "Vlastný dokument nepoužíva URL, nahraj súbor."
+                })
+
+        elif section_type == "custom_links":
+            if not self.url:
+                raise ValidationError({"url": "Pri vlastnom odkaze vyplň URL."})
+            if self.file:
+                raise ValidationError({
+                    "file": "Vlastný odkaz nepoužíva súbor."
+                })
+
+        else:
+            raise ValidationError(
+                "Položky môžeš pridávať iba k sekciám Vlastné dokumenty alebo Vlastné odkazy."
+            )
+
+        existing_items = self.section.items.exclude(pk=self.pk).count()
+
+        if existing_items >= 30:
+            raise ValidationError("Jedna sekcia môže mať najviac 30 položiek.")
+
+    def save(self, *args, **kwargs):
+        if self.section_id:
+            if self.section.section_type == "custom_documents":
+                self.url = ""
+            elif self.section.section_type == "custom_links":
+                self.file = None
+
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.title
 
 
 DEFAULT_SECTION_TEMPLATES = {
@@ -319,6 +465,10 @@ DEFAULT_SECTION_TEMPLATES = {
         ("matches_overview", "Extraliga", "Výsledky"),
         ("leaders", "Štatistiky tímu", "Lídri sezóny"),
     ],
+    "custom": [
+        ("hero", "", ""),
+        ("custom_text", "", ""),
+    ],
 }
 
 
@@ -341,4 +491,5 @@ def create_default_page_sections(page):
         )
         for index, (section_type, pre_title, title) in enumerate(templates, start=1)
     )
+
     return True

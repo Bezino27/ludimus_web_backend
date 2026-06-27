@@ -72,15 +72,62 @@ class SzfbPlayerStatAdmin(admin.ModelAdmin):
         "birth_year",
         "team_short_name",
         "player_position",
+        "jersey_number",
+        "is_active",
+        "is_featured",
+        "display_order",
         "games",
         "goals",
         "assists",
         "points",
-        "points_avg",
-        "esp",
-        "ppp",
-        "shp",
-        "pim",
     )
-    list_filter = ("watched_team", "player_position")
-    search_fields = ("player_name", "team_short_name")
+
+    list_filter = (
+        "watched_team",
+        "player_position",
+        "is_active",
+        "is_featured",
+    )
+
+    search_fields = (
+        "player_name",
+        "team_short_name",
+    )
+
+    fieldsets = (
+        ("SZFB údaje", {
+            "fields": (
+                "watched_team",
+                "rank",
+                "player_name",
+                "birth_year",
+                "team_short_name",
+                "player_position",
+                "games",
+                "goals",
+                "assists",
+                "points",
+                "points_avg",
+                "esp",
+                "ppp",
+                "shp",
+                "pim",
+            )
+        }),
+        ("Klubové údaje", {
+            "fields": (
+                "photo",
+                "jersey_number",
+                "bio",
+                "is_active",
+                "is_featured",
+                "display_order",
+            )
+        }),
+    )
+
+    ordering = (
+        "watched_team",
+        "display_order",
+        "rank",
+    )

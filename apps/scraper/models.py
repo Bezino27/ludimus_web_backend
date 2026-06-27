@@ -97,6 +97,13 @@ class SzfbPlayerStat(models.Model):
     points = models.PositiveIntegerField(default=0)
 
     points_avg = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+ # # CUSTOM CLUB DATA
+    photo = models.ImageField(upload_to="players/photos/", null=True, blank=True)
+    jersey_number = models.PositiveIntegerField(null=True, blank=True)
+    bio = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    is_featured = models.BooleanField(default=False)
+    display_order = models.PositiveIntegerField(default=0)
 
     esp = models.PositiveIntegerField(default=0)
     ppp = models.PositiveIntegerField(default=0)

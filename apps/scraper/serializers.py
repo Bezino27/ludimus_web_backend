@@ -25,9 +25,25 @@ class SzfbTeamWatchSerializer(serializers.ModelSerializer):
 
 class SzfbPlayerStatSerializer(serializers.ModelSerializer):
     player_name = serializers.SerializerMethodField()
+    photo_url = serializers.SerializerMethodField()
+    display_position = serializers.SerializerMethodField()
 
     def get_player_name(self, obj):
         return format_player_name(obj.player_name)
+
+    def get_photo_url(self, obj):
+        if not obj.photo:
+            return None
+
+        request = self.context.get("request")
+
+        if request:
+            return request.build_absolute_uri(obj.photo.url)
+
+        return obj.photo.url
+
+    def get_display_position(self, obj):
+        return obj.player_position
 
     class Meta:
         model = SzfbPlayerStat
@@ -47,4 +63,14 @@ class SzfbPlayerStatSerializer(serializers.ModelSerializer):
             "ppp",
             "shp",
             "pim",
+
+            # Klubové údaje
+            "photo",
+            "photo_url",
+            "jersey_number",
+            "display_position",
+            "bio",
+            "is_active",
+            "is_featured",
+            "display_order",
         ]
