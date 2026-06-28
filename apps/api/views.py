@@ -6,8 +6,6 @@ from rest_framework.permissions import AllowAny
 from apps.clubs.models import Club
 from apps.clubs.serializers import ClubSerializer
 from apps.club_info.models import ClubLink
-from apps.homepage.models import HomepageSection
-from apps.homepage.serializers import HomepageSectionSerializer
 from apps.posts.models import Post
 from apps.posts.serializers import PostListSerializer
 from apps.partners.models import Partner
@@ -37,10 +35,6 @@ class PublicHomeView(APIView):
         if not club:
             return Response({"detail": "Klub neexistuje."}, status=404)
 
-        sections = HomepageSection.objects.filter(
-            club=club,
-            is_active=True,
-        ).order_by("order", "id")
 
         latest_posts = (
             Post.objects.filter(
@@ -64,7 +58,6 @@ class PublicHomeView(APIView):
 
         data = {
             "club": ClubSerializer(club, context={"request": request}).data,
-            "sections": HomepageSectionSerializer(sections, many=True, context={"request": request}).data,
             "latest_posts": PostListSerializer(latest_posts, many=True, context={"request": request}).data,
             "partners": PartnerSerializer(partners, many=True, context={"request": request}).data,
             "menu_pages": PageSerializer(menu_pages, many=True, context={"request": request}).data,

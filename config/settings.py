@@ -27,7 +27,6 @@ INSTALLED_APPS = [
     "apps.clubs",
     "apps.posts",
     "apps.pages",
-    "apps.homepage",
     "apps.teams",
     "apps.partners",
     "apps.gallery",
