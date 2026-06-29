@@ -3,7 +3,13 @@ from django.contrib import admin
 from django.forms.models import BaseInlineFormSet
 from django.utils.html import format_html
 
-from .models import Page, PageSection, PageSectionItem, SECTION_CHOICES_BY_PAGE_TYPE
+from .models import (
+    Page,
+    PageSection,
+    PageSectionContactItem,
+    PageSectionItem,
+    SECTION_CHOICES_BY_PAGE_TYPE,
+)
 
 
 # # PAGE SECTION FORM
@@ -113,6 +119,21 @@ class CustomDocumentItemInline(admin.TabularInline):
     ordering = ["order", "id"]
     verbose_name = "Vlastný dokument"
     verbose_name_plural = "Vlastné dokumenty"
+
+
+class ContactItemInline(admin.TabularInline):
+    model = PageSectionContactItem
+    extra = 1
+    fields = [
+        "contact_type",
+        "value",
+        "url",
+        "order",
+        "is_active",
+    ]
+    ordering = ["order", "id"]
+    verbose_name = "Kontaktná položka"
+    verbose_name_plural = "Kontaktné položky"
 
 
 # # PAGE ADMIN
@@ -257,6 +278,9 @@ class PageSectionAdmin(admin.ModelAdmin):
 
         if obj.section_type == "custom_documents":
             return [CustomDocumentItemInline(self.model, self.admin_site)]
+
+        if obj.section_type == "contact":
+            return [ContactItemInline(self.model, self.admin_site)]
 
         return []
 

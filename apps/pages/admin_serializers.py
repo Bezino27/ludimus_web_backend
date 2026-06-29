@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Page, PageSection
+from .models import Page, PageSection, PageSectionContactItem
 from apps.common.permissions import user_has_club_role, EDITOR_ROLES
 
 
@@ -17,6 +17,23 @@ class AdminPageSectionSerializer(serializers.ModelSerializer):
             "is_active",
             "hide_when_empty",
             "config",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["created_at", "updated_at"]
+
+
+class AdminPageSectionContactItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PageSectionContactItem
+        fields = [
+            "id",
+            "section",
+            "contact_type",
+            "value",
+            "url",
+            "order",
+            "is_active",
             "created_at",
             "updated_at",
         ]

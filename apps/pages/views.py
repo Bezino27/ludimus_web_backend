@@ -20,7 +20,7 @@ class ClubPageDetailView(generics.RetrieveAPIView):
                 is_published=True,
             )
             .select_related("club")
-            .prefetch_related("sections", "sections__items")
+            .prefetch_related("sections", "sections__items", "sections__contact_items")
         )
 
 
@@ -37,7 +37,7 @@ class ClubPageHomeView(generics.RetrieveAPIView):
                 is_homepage=True,
             )
             .select_related("club")
-            .prefetch_related("sections", "sections__items")
+            .prefetch_related("sections", "sections__items", "sections__contact_items")
             .get()
         )
 

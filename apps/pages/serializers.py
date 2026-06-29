@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Page, PageSection, PageSectionItem
+from .models import Page, PageSection, PageSectionContactItem, PageSectionItem
 
 
 class PageSectionItemSerializer(serializers.ModelSerializer):
@@ -42,10 +42,24 @@ class PageSectionItemSerializer(serializers.ModelSerializer):
         return "item"
 
 
+class PageSectionContactItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PageSectionContactItem
+        fields = [
+            "id",
+            "contact_type",
+            "value",
+            "url",
+            "order",
+            "is_active",
+        ]
+
+
 class PageSectionSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     image_url = serializers.SerializerMethodField()
     items = serializers.SerializerMethodField()
+    contact_items = serializers.SerializerMethodField()
 
     class Meta:
         model = PageSection
@@ -65,6 +79,7 @@ class PageSectionSerializer(serializers.ModelSerializer):
             "hide_when_empty",
             "config",
             "items",
+            "contact_items",
         ]
 
     def get_file_url(self, obj):
@@ -94,6 +109,14 @@ class PageSectionSerializer(serializers.ModelSerializer):
     def get_items(self, obj):
         items = obj.items.filter(is_active=True).order_by("order", "id")
         return PageSectionItemSerializer(items, many=True, context=self.context).data
+
+    def get_contact_items(self, obj):
+        items = obj.contact_items.filter(is_active=True).order_by("order", "id")
+        return PageSectionContactItemSerializer(
+            items,
+            many=True,
+            context=self.context,
+        ).data
 
 
 class PageSerializer(serializers.ModelSerializer):

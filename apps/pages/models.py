@@ -337,6 +337,70 @@ class PageSection(TimeStampedModel):
         super().save(*args, **kwargs)
 
 
+class PageSectionContactItem(TimeStampedModel):
+    CONTACT_TYPE_CHOICES = [
+        ("phone", "Telefón"),
+        ("email", "Email"),
+        ("iban", "IBAN"),
+        ("address", "Adresa"),
+        ("person", "Osoba / kontaktná osoba"),
+        ("web", "Web / URL"),
+        ("text", "Text / poznámka"),
+    ]
+
+    section = models.ForeignKey(
+        PageSection,
+        on_delete=models.CASCADE,
+        related_name="contact_items",
+        limit_choices_to={"section_type": "contact"},
+    )
+
+    contact_type = models.CharField(
+        max_length=30,
+        choices=CONTACT_TYPE_CHOICES,
+        default="text",
+    )
+    value = models.TextField(blank=True)
+    url = models.CharField(max_length=500, blank=True)
+    order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["order", "id"]
+        verbose_name = "Kontaktná položka sekcie"
+        verbose_name_plural = "Kontaktné položky"
+
+    def clean(self):
+        super().clean()
+
+        if not self.section_id:
+            return
+
+        if self.section.section_type != "contact":
+            raise ValidationError({
+                "section": "Kontaktné položky môžeš pridávať iba ku kontaktnej sekcii."
+            })
+
+        if not self.value and not self.url:
+            raise ValidationError({
+                "value": "Vyplň hodnotu alebo URL kontaktnej položky."
+            })
+
+        existing_items = self.section.contact_items.exclude(pk=self.pk).count()
+
+        if existing_items >= 30:
+            raise ValidationError("Jedna kontaktná sekcia môže mať najviac 30 položiek.")
+
+    def save(self, *args, **kwargs):
+        if self.contact_type != "web":
+            self.url = ""
+
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.value or self.get_contact_type_display()
+
+
 class PageSectionItem(TimeStampedModel):
     section = models.ForeignKey(
         PageSection,
