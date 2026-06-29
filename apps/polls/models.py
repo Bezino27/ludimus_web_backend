@@ -6,6 +6,13 @@ from django.utils import timezone
 
 
 class Poll(models.Model):
+    club = models.ForeignKey(
+        "clubs.Club",
+        on_delete=models.CASCADE,
+        related_name="polls",
+        null=True,
+        blank=True,
+    )
     question = models.CharField(max_length=255)
     description = models.TextField(blank=True, default="")
 
@@ -35,7 +42,10 @@ class Poll(models.Model):
 
         overlapping_polls = [
             poll
-            for poll in Poll.objects.filter(is_active=True).exclude(pk=self.pk)
+            for poll in Poll.objects.filter(
+                is_active=True,
+                club=self.club,
+            ).exclude(pk=self.pk)
             if self._intervals_overlap(
                 self.starts_at,
                 self.ends_at,

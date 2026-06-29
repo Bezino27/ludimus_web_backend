@@ -16,6 +16,7 @@ urlpatterns = [
     path("api/admin/posts/", include("apps.posts.admin_urls")),
     path("api/admin/pages/", include("apps.pages.admin_urls")),
     path("api/admin/partners/", include("apps.partners.admin_urls")),
+    path("api/admin/polls/", include("apps.polls.admin_urls")),
     path("api/admin/gallery/", include("apps.gallery.admin_urls")),
     path("api/public/szfb/", include("apps.scraper.urls")),
 

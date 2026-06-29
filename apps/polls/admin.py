@@ -13,6 +13,7 @@ class PollOptionInline(admin.TabularInline):
 class PollAdmin(admin.ModelAdmin):
     list_display = (
         "id",
+        "club",
         "question",
         "admin_enabled",
         "is_currently_open",
@@ -20,8 +21,8 @@ class PollAdmin(admin.ModelAdmin):
         "ends_at",
         "created_at",
     )
-    list_filter = ("is_active", "created_at", "starts_at", "ends_at")
-    search_fields = ("question", "description")
+    list_filter = ("club", "is_active", "created_at", "starts_at", "ends_at")
+    search_fields = ("question", "description", "club__name", "club__slug")
     ordering = ("-created_at",)
     inlines = [PollOptionInline]
 
@@ -31,6 +32,7 @@ class PollAdmin(admin.ModelAdmin):
             {
                 "fields": (
                     "question",
+                    "club",
                     "description",
                 )
             },

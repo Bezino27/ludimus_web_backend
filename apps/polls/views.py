@@ -19,7 +19,16 @@ from .utils import (
 )
 
 
-MAX_VOTES_PER_IP_PER_POLL = 6
+MAX_VOTES_PER_IP_PER_POLL = 5
+
+
+def filter_polls_by_club_param(queryset, request):
+    club_slug = request.query_params.get("club")
+
+    if not club_slug:
+        return queryset
+
+    return queryset.filter(club__slug=club_slug)
 
 
 def build_poll_results_response_data(poll):
@@ -97,12 +106,15 @@ def poll_list_create_view(request):
         now = timezone.now()
 
         polls = list(
-            Poll.objects.filter(
-                is_active=True,
-            )
-            .filter(
-                Q(starts_at__isnull=True) | Q(starts_at__lte=now),
-                Q(ends_at__isnull=True) | Q(ends_at__gte=now),
+            filter_polls_by_club_param(
+                Poll.objects.filter(
+                    is_active=True,
+                )
+                .filter(
+                    Q(starts_at__isnull=True) | Q(starts_at__lte=now),
+                    Q(ends_at__isnull=True) | Q(ends_at__gte=now),
+                ),
+                request,
             )
             .prefetch_related("options")
             .order_by("-created_at")[:2]
@@ -332,7 +344,10 @@ def latest_poll_result_view(request):
     ended_by_date = Q(ends_at__isnull=False, ends_at__lt=now)
 
     poll = (
-        Poll.objects.filter(already_started)
+        filter_polls_by_club_param(
+            Poll.objects.filter(already_started),
+            request,
+        )
         .filter(manually_closed | ended_by_date)
         .order_by("-ends_at", "-updated_at", "-created_at")
         .first()
