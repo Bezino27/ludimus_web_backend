@@ -123,6 +123,7 @@ class PageSerializer(serializers.ModelSerializer):
     club_slug = serializers.CharField(source="club.slug", read_only=True)
     public_path = serializers.CharField(source="get_public_path", read_only=True)
     sections = serializers.SerializerMethodField()
+    team_category = serializers.SerializerMethodField()
 
     class Meta:
         model = Page
@@ -139,6 +140,7 @@ class PageSerializer(serializers.ModelSerializer):
             "navigation_order",
             "menu_group",
             "menu_group_title",
+            "team_category",
             "public_path",
             "meta_title",
             "meta_description",
@@ -152,3 +154,17 @@ class PageSerializer(serializers.ModelSerializer):
     def get_sections(self, obj):
         sections = obj.sections.filter(is_active=True).order_by("order", "id")
         return PageSectionSerializer(sections, many=True, context=self.context).data
+
+    def get_team_category(self, obj):
+        category = obj.team_category
+
+        if not category:
+            return None
+
+        return {
+            "id": category.id,
+            "name": category.name,
+            "slug": category.slug,
+            "category_subname": category.category_subname,
+            "league_name": category.league_name,
+        }

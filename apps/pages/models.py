@@ -58,16 +58,6 @@ SECTION_CHOICES_BY_PAGE_TYPE = {
         "recruitment",
         "links",
     ],
-    "team_category": [
-        "hero",
-        "next_match",
-        "posts",
-        "matches_overview",
-        "leaders",
-        "trainings",
-        "recruitment",
-        "links",
-    ],
     "articles": [
         "hero",
         "top_posts",
@@ -104,7 +94,6 @@ class Page(TimeStampedModel):
         ("contact", "Kontakt"),
         ("recruitment", "Nábor / Pridaj sa"),
         ("category", "Kategória tímu"),
-        ("team_category", "Kategória tímu"),
         ("articles", "Články"),
         ("custom", "Vlastná stránka"),
         ("standard", "Štandardná stránka"),
@@ -149,6 +138,14 @@ class Page(TimeStampedModel):
     )
     menu_group_title = models.CharField(max_length=120, blank=True)
 
+    team_category = models.ForeignKey(
+        "teams.Category",
+        on_delete=models.SET_NULL,
+        related_name="pages",
+        blank=True,
+        null=True,
+    )
+
     meta_title = models.CharField(max_length=255, blank=True)
     meta_description = models.TextField(blank=True)
     og_image = models.ImageField(upload_to="pages/og/", blank=True, null=True)
@@ -170,6 +167,15 @@ class Page(TimeStampedModel):
         if self.is_homepage:
             self.page_type = "home"
 
+        if (
+            self.team_category_id
+            and self.club_id
+            and self.team_category.club_id != self.club_id
+        ):
+            raise ValidationError({
+                "team_category": "Napojená kategória musí patriť rovnakému klubu."
+            })
+
     def get_public_path(self):
         if self.is_homepage or self.page_type == "home" or self.slug == "home":
             return "/"
@@ -183,6 +189,9 @@ class Page(TimeStampedModel):
         if self.page_type == "recruitment" or self.slug in {"pridaj_sa", "pridaj-sa"}:
             return "/pridaj_sa"
 
+        if self.page_type == "category":
+            return f"/kategorie/{self.slug}"
+
         category_slugs = {
             "muzi",
             "pripravka",
@@ -192,7 +201,7 @@ class Page(TimeStampedModel):
             "juniori",
         }
 
-        if self.page_type in {"category", "team_category"} or self.slug in category_slugs:
+        if self.slug in category_slugs:
             return f"/kategorie/{self.slug}"
 
         if self.slug == "clanky" or self.page_type == "articles":
@@ -510,16 +519,6 @@ DEFAULT_SECTION_TEMPLATES = {
         ("posts", "", "Najnovšie články"),
     ],
     "category": [
-        ("hero", "", ""),
-        ("links", "SZFB", "Odkazy"),
-        ("trainings", "Tréningy", "Kde trénujeme"),
-        ("recruitment", "Nábor", ""),
-        ("posts", "Aktuálne dianie", "Najdôležitejšie novinky"),
-        ("next_match", "Zápasy", "Featured zápasy"),
-        ("matches_overview", "Extraliga", "Výsledky"),
-        ("leaders", "Štatistiky tímu", "Lídri sezóny"),
-    ],
-    "team_category": [
         ("hero", "", ""),
         ("links", "SZFB", "Odkazy"),
         ("trainings", "Tréningy", "Kde trénujeme"),

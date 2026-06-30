@@ -1,11 +1,16 @@
-from rest_framework import viewsets
+from django.db import transaction
+
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.response import Response
 
 from .models import (
     Page,
     PageSection,
     PageSectionContactItem,
+    SECTION_CHOICES_BY_PAGE_TYPE,
     create_default_page_sections,
 )
 from .revalidation import revalidate_page, revalidate_page_section
@@ -68,6 +73,45 @@ class AdminPageViewSet(viewsets.ModelViewSet):
         instance.delete()
         revalidate_page(page, reason="Page deleted via admin API")
 
+    @action(detail=False, methods=["get"], url_path="section-options")
+    def section_options(self, request):
+        page_id = request.query_params.get("page")
+
+        if not page_id:
+            return Response(
+                {"detail": "Chýba parameter page."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        page = self.get_queryset().filter(id=page_id).first()
+
+        if not page:
+            return Response(
+                {"detail": "Stránka neexistuje alebo k nej nemáš oprávnenie."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        allowed_section_types = SECTION_CHOICES_BY_PAGE_TYPE.get(
+            page.page_type,
+            [],
+        )
+        labels_by_value = dict(PageSection.SECTION_TYPE_CHOICES)
+        items = [
+            {
+                "value": section_type,
+                "label": labels_by_value.get(section_type, section_type),
+            }
+            for section_type in allowed_section_types
+        ]
+
+        return Response(
+            {
+                "page_type": page.page_type,
+                "items": items,
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class AdminPageSectionViewSet(viewsets.ModelViewSet):
     serializer_class = AdminPageSectionSerializer
@@ -120,6 +164,78 @@ class AdminPageSectionViewSet(viewsets.ModelViewSet):
         section = instance
         instance.delete()
         revalidate_page_section(section, reason="PageSection deleted via admin API")
+
+    @action(detail=False, methods=["patch"], url_path="reorder")
+    def reorder(self, request):
+        items = request.data.get("items")
+
+        if not isinstance(items, list) or not items:
+            return Response(
+                {"detail": "Pošli neprázdny zoznam sekcií v poli items."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        section_ids = []
+        orders_by_id = {}
+
+        for index, item in enumerate(items, start=1):
+            if not isinstance(item, dict) or "id" not in item:
+                return Response(
+                    {"detail": "Každá položka musí obsahovať id sekcie."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                section_id = int(item["id"])
+                order = int(item.get("order", index))
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "Hodnoty id a order musia byť čísla."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            section_ids.append(section_id)
+            orders_by_id[section_id] = order
+
+        if len(set(section_ids)) != len(section_ids):
+            return Response(
+                {"detail": "Zoznam sekcií obsahuje duplicitné id."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        sections = list(self.get_queryset().filter(id__in=section_ids))
+
+        if len(sections) != len(section_ids):
+            return Response(
+                {"detail": "Niektoré sekcie neexistujú alebo k nim nemáš oprávnenie."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        page_ids = {section.page_id for section in sections}
+        if len(page_ids) != 1:
+            return Response(
+                {"detail": "Všetky sekcie musia patriť k jednej stránke."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        sections_by_id = {section.id: section for section in sections}
+        ordered_sections = [
+            sections_by_id[section_id]
+            for section_id in sorted(section_ids, key=lambda item_id: orders_by_id[item_id])
+        ]
+
+        with transaction.atomic():
+            for order, section in enumerate(ordered_sections, start=1):
+                section.order = order
+                section.save(update_fields=["order", "updated_at"])
+
+        revalidate_page_section(
+            ordered_sections[0],
+            reason="PageSections reordered via admin API",
+        )
+
+        serializer = self.get_serializer(ordered_sections, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class AdminPageSectionContactItemViewSet(viewsets.ModelViewSet):
