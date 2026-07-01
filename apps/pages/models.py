@@ -369,6 +369,12 @@ class PageSectionContactItem(TimeStampedModel):
         choices=CONTACT_TYPE_CHOICES,
         default="text",
     )
+    label = models.CharField(
+        max_length=120,
+        blank=True,
+        default="",
+        help_text="Popis položky, napr. Telefón, Email, IBAN alebo Adresa.",
+    )
     value = models.TextField(blank=True)
     url = models.CharField(max_length=500, blank=True)
     order = models.PositiveIntegerField(default=0)
@@ -403,6 +409,9 @@ class PageSectionContactItem(TimeStampedModel):
     def save(self, *args, **kwargs):
         if self.contact_type != "web":
             self.url = ""
+
+        if not self.label:
+            self.label = self.get_contact_type_display()
 
         super().save(*args, **kwargs)
 

@@ -2,6 +2,7 @@ from django.db import transaction
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
@@ -10,12 +11,14 @@ from .models import (
     Page,
     PageSection,
     PageSectionContactItem,
+    PageSectionItem,
     SECTION_CHOICES_BY_PAGE_TYPE,
     create_default_page_sections,
 )
 from .revalidation import revalidate_page, revalidate_page_section
 from .admin_serializers import (
     AdminPageSectionContactItemSerializer,
+    AdminPageSectionItemSerializer,
     AdminPageSectionSerializer,
     AdminPageSerializer,
 )
@@ -116,6 +119,7 @@ class AdminPageViewSet(viewsets.ModelViewSet):
 class AdminPageSectionViewSet(viewsets.ModelViewSet):
     serializer_class = AdminPageSectionSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser, FormParser, MultiPartParser]
 
     def get_queryset(self):
         user = self.request.user
@@ -238,6 +242,155 @@ class AdminPageSectionViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+class AdminPageSectionItemViewSet(viewsets.ModelViewSet):
+    serializer_class = AdminPageSectionItemSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser, FormParser, MultiPartParser]
+
+    def get_queryset(self):
+        user = self.request.user
+
+        club_ids = ClubMembership.objects.filter(
+            user=user,
+            is_active=True,
+            role__in=EDITOR_ROLES,
+        ).values_list("club_id", flat=True)
+
+        queryset = PageSectionItem.objects.filter(
+            section__page__club_id__in=club_ids
+        ).select_related("section", "section__page", "section__page__club").order_by(
+            "section__page__club__name",
+            "section__page__title",
+            "section__order",
+            "order",
+            "id",
+        )
+
+        club_slug = self.request.query_params.get("club")
+        if club_slug:
+            queryset = queryset.filter(section__page__club__slug=club_slug)
+
+        page_id = self.request.query_params.get("page")
+        if page_id:
+            queryset = queryset.filter(section__page_id=page_id)
+
+        section_id = self.request.query_params.get("section")
+        if section_id:
+            queryset = queryset.filter(section_id=section_id)
+
+        return queryset
+
+    def _validate_section_permission(self, section):
+        if section.section_type not in {"custom_documents", "custom_links"}:
+            raise PermissionDenied(
+                "Položka môže patriť iba ku sekcii Vlastné dokumenty alebo Vlastné odkazy."
+            )
+
+        if not user_has_club_role(self.request.user, section.page.club, EDITOR_ROLES):
+            raise PermissionDenied("Nemáš oprávnenie upravovať položky tejto sekcie.")
+
+    def perform_create(self, serializer):
+        section = serializer.validated_data["section"]
+        self._validate_section_permission(section)
+        item = serializer.save()
+        revalidate_page_section(
+            item.section,
+            reason="PageSectionItem created via admin API",
+        )
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        self._validate_section_permission(instance.section)
+        section = serializer.validated_data.get("section", instance.section)
+        self._validate_section_permission(section)
+        item = serializer.save()
+        revalidate_page_section(
+            item.section,
+            reason="PageSectionItem updated via admin API",
+        )
+
+    def perform_destroy(self, instance):
+        self._validate_section_permission(instance.section)
+        section = instance.section
+        instance.delete()
+        revalidate_page_section(
+            section,
+            reason="PageSectionItem deleted via admin API",
+        )
+
+    @action(detail=False, methods=["patch"], url_path="reorder")
+    def reorder(self, request):
+        items = request.data.get("items")
+
+        if not isinstance(items, list) or not items:
+            return Response(
+                {"detail": "Pošli neprázdny zoznam položiek v poli items."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        item_ids = []
+        orders_by_id = {}
+
+        for index, item in enumerate(items, start=1):
+            if not isinstance(item, dict) or "id" not in item:
+                return Response(
+                    {"detail": "Každá položka musí obsahovať id."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                item_id = int(item["id"])
+                order = int(item.get("order", index))
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "Hodnoty id a order musia byť čísla."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            item_ids.append(item_id)
+            orders_by_id[item_id] = order
+
+        if len(set(item_ids)) != len(item_ids):
+            return Response(
+                {"detail": "Zoznam položiek obsahuje duplicitné id."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        section_items = list(self.get_queryset().filter(id__in=item_ids))
+
+        if len(section_items) != len(item_ids):
+            return Response(
+                {"detail": "Niektoré položky neexistujú alebo k nim nemáš oprávnenie."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        section_ids = {item.section_id for item in section_items}
+        if len(section_ids) != 1:
+            return Response(
+                {"detail": "Všetky položky musia patriť k jednej sekcii."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        items_by_id = {item.id: item for item in section_items}
+        ordered_items = [
+            items_by_id[item_id]
+            for item_id in sorted(item_ids, key=lambda item_id: orders_by_id[item_id])
+        ]
+
+        with transaction.atomic():
+            for order, item in enumerate(ordered_items, start=1):
+                item.order = order
+                item.save(update_fields=["order", "updated_at"])
+
+        revalidate_page_section(
+            ordered_items[0].section,
+            reason="PageSectionItems reordered via admin API",
+        )
+
+        serializer = self.get_serializer(ordered_items, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
 class AdminPageSectionContactItemViewSet(viewsets.ModelViewSet):
     serializer_class = AdminPageSectionContactItemSerializer
     permission_classes = [IsAuthenticated]
@@ -258,6 +411,7 @@ class AdminPageSectionContactItemViewSet(viewsets.ModelViewSet):
             "section__page__title",
             "section__order",
             "order",
+            "id",
         )
 
         club_slug = self.request.query_params.get("club")

@@ -1,20 +1,18 @@
 from rest_framework import serializers
 
-from .models import (
-    ContactInfo,
-    ClubDocument,
-    ClubLink,
-)
+from .models import ContactInfo, ClubDocument, ClubLink
 
 
-class ContactInfoSerializer(serializers.ModelSerializer):
-    club = serializers.SerializerMethodField()
+class AdminContactInfoSerializer(serializers.ModelSerializer):
+    club_name = serializers.CharField(source="club.name", read_only=True)
+    club_slug = serializers.CharField(source="club.slug", read_only=True)
 
     class Meta:
         model = ContactInfo
         fields = [
             "id",
-            "club",
+            "club_name",
+            "club_slug",
             "address",
             "chairman_name",
             "email",
@@ -26,19 +24,13 @@ class ContactInfoSerializer(serializers.ModelSerializer):
             "longitude",
             "note",
             "is_active",
+            "created_at",
             "updated_at",
         ]
-
-    def get_club(self, obj):
-        return {
-            "id": obj.club.id,
-            "name": obj.club.name,
-            "slug": obj.club.slug,
-            "short_name": getattr(obj.club, "short_name", ""),
-        }
+        read_only_fields = ["id", "club_name", "club_slug", "created_at", "updated_at"]
 
 
-class ClubDocumentSerializer(serializers.ModelSerializer):
+class AdminClubDocumentSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -50,8 +42,10 @@ class ClubDocumentSerializer(serializers.ModelSerializer):
             "file_url",
             "order",
             "is_active",
+            "created_at",
             "updated_at",
         ]
+        read_only_fields = ["id", "file_url", "created_at", "updated_at"]
 
     def get_file_url(self, obj):
         request = self.context.get("request")
@@ -65,7 +59,7 @@ class ClubDocumentSerializer(serializers.ModelSerializer):
         return None
 
 
-class ClubLinkSerializer(serializers.ModelSerializer):
+class AdminClubLinkSerializer(serializers.ModelSerializer):
     logo_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -80,6 +74,7 @@ class ClubLinkSerializer(serializers.ModelSerializer):
             "order",
             "is_active",
         ]
+        read_only_fields = ["id", "logo_url"]
 
     def get_logo_url(self, obj):
         request = self.context.get("request")

@@ -17,9 +17,9 @@ def revalidate_club_link_paths(obj, reason):
 
 @admin.register(ContactInfo)
 class ContactInfoAdmin(admin.ModelAdmin):
-    list_display = ("club", "title", "email", "phone", "is_active", "updated_at")
+    list_display = ("club", "email", "phone", "is_active", "updated_at")
     list_filter = ("is_active", "club")
-    search_fields = ("club__name", "title", "address", "email", "phone")
+    search_fields = ("club__name", "address", "email", "phone", "chairman_name")
     readonly_fields = ("created_at", "updated_at")
 
     def save_model(self, request, obj, form, change):

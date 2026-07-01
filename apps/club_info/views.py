@@ -2,8 +2,12 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 
-from .models import ContactInfo, ClubDocument
-from .serializers import ContactInfoSerializer, ClubDocumentSerializer
+from .models import ContactInfo, ClubDocument, ClubLink
+from .serializers import (
+    ContactInfoSerializer,
+    ClubDocumentSerializer,
+    ClubLinkSerializer,
+)
 
 
 @api_view(["GET"])
@@ -38,6 +42,27 @@ def public_documents_list(request, club_slug):
 
     serializer = ClubDocumentSerializer(
         documents,
+        many=True,
+        context={"request": request},
+    )
+
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+def public_links_list(request, club_slug):
+    links = (
+        ClubLink.objects.select_related("club")
+        .filter(
+            club__slug=club_slug,
+            club__is_active=True,
+            is_active=True,
+        )
+        .order_by("order", "title")
+    )
+
+    serializer = ClubLinkSerializer(
+        links,
         many=True,
         context={"request": request},
     )

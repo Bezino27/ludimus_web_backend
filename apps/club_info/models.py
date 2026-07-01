@@ -11,9 +11,6 @@ class ContactInfo(models.Model):
         related_name="contact_info",
     )
 
-    section_label = models.CharField(max_length=80, default="Kontakt")
-    title = models.CharField(max_length=160)
-
     address = models.CharField(max_length=255)
     chairman_name = models.CharField(max_length=160, blank=True)
 

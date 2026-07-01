@@ -1,5 +1,8 @@
 from rest_framework import serializers
 
+from apps.club_info.models import ClubDocument, ClubLink
+from apps.club_info.serializers import ClubDocumentSerializer, ClubLinkSerializer
+
 from .models import Page, PageSection, PageSectionContactItem, PageSectionItem
 
 
@@ -107,7 +110,31 @@ class PageSectionSerializer(serializers.ModelSerializer):
         return image_url
 
     def get_items(self, obj):
-        items = obj.items.filter(is_active=True).order_by("order", "id")
+        if obj.section_type == "links":
+            if obj.page.page_type in {"category", "team_category"}:
+                return []
+
+            links = ClubLink.objects.filter(
+                club=obj.page.club,
+                is_active=True,
+            ).order_by("order", "title")
+            return ClubLinkSerializer(links, many=True, context=self.context).data
+
+        if obj.section_type == "documents":
+            if obj.page.page_type in {"category", "team_category"}:
+                return []
+
+            documents = ClubDocument.objects.filter(
+                club=obj.page.club,
+                is_active=True,
+            ).order_by("order", "title")
+            return ClubDocumentSerializer(
+                documents,
+                many=True,
+                context=self.context,
+            ).data
+
+        items = obj.items.filter(is_active=True).order_by("order", "title")
         return PageSectionItemSerializer(items, many=True, context=self.context).data
 
     def get_contact_items(self, obj):

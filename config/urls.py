@@ -20,7 +20,8 @@ urlpatterns = [
     path("api/admin/gallery/", include("apps.gallery.admin_urls")),
     path("api/admin/teams/", include("apps.teams.admin_urls")),
     path("api/public/szfb/", include("apps.scraper.urls")),
-
+    
+    path("api/admin/club-info/", include("apps.club_info.admin_urls")),
     path("api/guli/", include("apps.guli.urls")),
     path("api/polls/", include("apps.polls.urls")),
     path("api/public/", include("apps.club_info.urls")),
