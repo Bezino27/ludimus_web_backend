@@ -158,3 +158,4 @@ REST_FRAMEWORK = {
         "recruitment_form": "5/hour",
     },
 }
+SZFB_SYNC_RATE_LIMIT_MINUTES = 0

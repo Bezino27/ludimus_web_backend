@@ -25,7 +25,7 @@ urlpatterns = [
     path("api/guli/", include("apps.guli.urls")),
     path("api/polls/", include("apps.polls.urls")),
     path("api/public/", include("apps.club_info.urls")),
-    
+    path("api/admin/szfb/", include("apps.scraper.admin_urls")),    
 
 ]
 

@@ -7,7 +7,14 @@ from .models import (
     SzfbMatch,
     SzfbPlayerStat,
 )
-
+from .models import (
+    ClubPlayer,
+    SzfbCompetition,
+    SzfbStandingRow,
+    SzfbTeamWatch,
+    SzfbMatch,
+    SzfbPlayerStat,
+)
 
 @admin.register(SzfbCompetition)
 class SzfbCompetitionAdmin(admin.ModelAdmin):
@@ -16,11 +23,12 @@ class SzfbCompetitionAdmin(admin.ModelAdmin):
         "szfb_competition_id",
         "name",
         "season",
+        "sync_status",
         "last_synced_at",
+        "sync_finished_at",
     )
     search_fields = ("name", "season", "szfb_competition_id")
-
-
+    list_filter = ("sync_status", "season")
 @admin.register(SzfbStandingRow)
 class SzfbStandingRowAdmin(admin.ModelAdmin):
     list_display = (
@@ -130,4 +138,40 @@ class SzfbPlayerStatAdmin(admin.ModelAdmin):
         "watched_team",
         "display_order",
         "rank",
+    )
+
+@admin.register(ClubPlayer)
+class ClubPlayerAdmin(admin.ModelAdmin):
+    list_display = (
+        "club",
+        "full_name",
+        "birth_year",
+        "jersey_number",
+        "position",
+        "is_active",
+        "is_featured",
+        "display_order",
+        "updated_at",
+    )
+    list_filter = (
+        "club",
+        "is_active",
+        "is_featured",
+        "position",
+    )
+    search_fields = (
+        "full_name",
+        "normalized_name",
+        "identity_key",
+    )
+    readonly_fields = (
+        "normalized_name",
+        "identity_key",
+        "created_at",
+        "updated_at",
+    )
+    ordering = (
+        "club",
+        "display_order",
+        "full_name",
     )

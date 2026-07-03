@@ -1,11 +1,14 @@
 from django.utils import timezone
 
 from apps.scraper.models import (
+    ClubPlayer,
     SzfbCompetition,
     SzfbMatch,
     SzfbPlayerStat,
     SzfbStandingRow,
     SzfbTeamWatch,
+    build_club_player_identity_key,
+    normalize_player_name,
 )
 
 from apps.scraper.services.szfb_scraper import (
@@ -18,35 +21,137 @@ from apps.scraper.services.szfb_scraper import (
 )
 
 
-def sync_competition_from_home_url(home_url: str):
-    """
-    Hlavná sync funkcia.
+def _get_or_create_club_player(watch: SzfbTeamWatch, player_data: dict):
+    club = watch.club
 
-    Spraví:
-    1. načíta základné info o súťaži,
-    2. uloží / aktualizuje SzfbCompetition,
-    3. stiahne tabuľku súťaže,
-    4. stiahne zápasy sledovaných tímov,
-    5. stiahne produktivitu hráčov sledovaných tímov.
-    """
+    if not club:
+        return None
 
-    # # 1. ZÁKLADNÉ INFO O SÚŤAŽI
+    player_name = player_data["player_name"]
+    birth_year = player_data["birth_year"]
+    normalized_name = normalize_player_name(player_name)
+    identity_key = build_club_player_identity_key(player_name, birth_year)
 
-    data = extract_competition_info(home_url)
-
-    competition, _ = SzfbCompetition.objects.update_or_create(
-        szfb_competition_id=data["szfb_competition_id"],
+    club_player, created = ClubPlayer.objects.get_or_create(
+        club=club,
+        identity_key=identity_key,
         defaults={
-            "name": data["name"],
-            "season": data["season"],
-            "source_url": data["source_url"],
-            "standings_url": data["standings_url"],
-            "results_url": data["results_url"],
-            "last_synced_at": timezone.now(),
+            "full_name": player_name,
+            "normalized_name": normalized_name,
+            "birth_year": birth_year,
+            "position": player_data.get("player_position") or "",
         },
     )
 
-    # # 2. TABUĽKA SÚŤAŽE
+    changed_fields = []
+
+    if not created:
+        if not club_player.full_name and player_name:
+            club_player.full_name = player_name
+            changed_fields.append("full_name")
+
+        if not club_player.normalized_name:
+            club_player.normalized_name = normalized_name
+            changed_fields.append("normalized_name")
+
+        if not club_player.birth_year and birth_year:
+            club_player.birth_year = birth_year
+            changed_fields.append("birth_year")
+
+        if not club_player.position and player_data.get("player_position"):
+            club_player.position = player_data["player_position"]
+            changed_fields.append("position")
+
+        if changed_fields:
+            club_player.save(update_fields=changed_fields)
+
+    return club_player
+
+
+def _get_legacy_player_fields_from_club_player(club_player: ClubPlayer | None):
+    if not club_player:
+        return {
+            "photo": "",
+            "jersey_number": None,
+            "bio": "",
+            "is_active": True,
+            "is_featured": False,
+            "display_order": 0,
+        }
+
+    return {
+        "photo": club_player.photo.name if club_player.photo else "",
+        "jersey_number": club_player.jersey_number,
+        "bio": club_player.bio,
+        "is_active": club_player.is_active,
+        "is_featured": club_player.is_featured,
+        "display_order": club_player.display_order,
+    }
+
+
+def sync_competition_from_home_url(home_url: str, competition_id: int | None = None):
+    data = extract_competition_info(home_url)
+
+    if competition_id:
+        competition = SzfbCompetition.objects.get(id=competition_id)
+
+        competition.szfb_competition_id = data["szfb_competition_id"]
+        competition.name = data["name"]
+        competition.season = data["season"]
+        competition.source_url = data["source_url"]
+        competition.standings_url = data["standings_url"]
+        competition.results_url = data["results_url"]
+        competition.last_synced_at = timezone.now()
+        competition.save(
+            update_fields=[
+                "szfb_competition_id",
+                "name",
+                "season",
+                "source_url",
+                "standings_url",
+                "results_url",
+                "last_synced_at",
+            ]
+        )
+    else:
+        existing_competition = (
+            SzfbCompetition.objects
+            .filter(source_url=home_url)
+            .first()
+        )
+
+        if existing_competition:
+            competition = existing_competition
+            competition.szfb_competition_id = data["szfb_competition_id"]
+            competition.name = data["name"]
+            competition.season = data["season"]
+            competition.source_url = data["source_url"]
+            competition.standings_url = data["standings_url"]
+            competition.results_url = data["results_url"]
+            competition.last_synced_at = timezone.now()
+            competition.save(
+                update_fields=[
+                    "szfb_competition_id",
+                    "name",
+                    "season",
+                    "source_url",
+                    "standings_url",
+                    "results_url",
+                    "last_synced_at",
+                ]
+            )
+        else:
+            competition, _ = SzfbCompetition.objects.update_or_create(
+                szfb_competition_id=data["szfb_competition_id"],
+                defaults={
+                    "name": data["name"],
+                    "season": data["season"],
+                    "source_url": data["source_url"],
+                    "standings_url": data["standings_url"],
+                    "results_url": data["results_url"],
+                    "last_synced_at": timezone.now(),
+                },
+            )
 
     if competition.standings_url:
         standings = fetch_standings(competition.standings_url)
@@ -66,14 +171,14 @@ def sync_competition_from_home_url(home_url: str):
             ]
         )
 
-    # # 3. AKTÍVNE SLEDOVANÉ TÍMY
-
-    watches = SzfbTeamWatch.objects.filter(
-        competition=competition,
-        is_active=True,
+    watches = (
+        SzfbTeamWatch.objects
+        .select_related("club", "competition")
+        .filter(
+            competition=competition,
+            is_active=True,
+        )
     )
-
-    # # 4. ZÁPASY SLEDOVANÝCH TÍMOV
 
     if competition.results_url:
         all_matches = fetch_matches(competition.results_url)
@@ -100,10 +205,9 @@ def sync_competition_from_home_url(home_url: str):
                         external_key=item["external_key"],
                     )
                     for item in filtered_matches
-                ]
+                ],
+                ignore_conflicts=True,
             )
-
-    # # 5. PRODUKTIVITA HRÁČOV SLEDOVANÝCH TÍMOV
 
     for watch in watches:
         if not watch.competitor_id:
@@ -119,10 +223,16 @@ def sync_competition_from_home_url(home_url: str):
 
         watch.player_stats.all().delete()
 
-        SzfbPlayerStat.objects.bulk_create(
-            [
+        players_to_create = []
+
+        for item in player_stats:
+            club_player = _get_or_create_club_player(watch, item)
+            legacy_fields = _get_legacy_player_fields_from_club_player(club_player)
+
+            players_to_create.append(
                 SzfbPlayerStat(
                     watched_team=watch,
+                    club_player=club_player,
                     rank=item["rank"],
                     player_name=item["player_name"],
                     birth_year=item["birth_year"],
@@ -137,12 +247,16 @@ def sync_competition_from_home_url(home_url: str):
                     ppp=item["ppp"],
                     shp=item["shp"],
                     pim=item["pim"],
+                    photo=legacy_fields["photo"],
+                    jersey_number=legacy_fields["jersey_number"],
+                    bio=legacy_fields["bio"],
+                    is_active=legacy_fields["is_active"],
+                    is_featured=legacy_fields["is_featured"],
+                    display_order=legacy_fields["display_order"],
                 )
-                for item in player_stats
-            ]
-        )
+            )
 
-    # # 6. OZNAČENIE ČASU POSLEDNÉHO SYNCU
+        SzfbPlayerStat.objects.bulk_create(players_to_create)
 
     competition.last_synced_at = timezone.now()
     competition.save(update_fields=["last_synced_at"])

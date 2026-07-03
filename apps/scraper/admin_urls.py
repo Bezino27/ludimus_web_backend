@@ -1,0 +1,73 @@
+from django.urls import path
+
+from apps.scraper.views import (
+    AdminClubPlayerListView,
+    AdminClubPlayerUpdateView,
+    AdminSzfbCompetitionListView,
+    AdminSzfbCompetitionStandingsView,
+    AdminSzfbCompetitionSyncView,
+    AdminSzfbPlayerStatUpdateView,
+    AdminSzfbTeamWatchListView,
+    AdminSzfbWatchMatchesView,
+    AdminSzfbWatchPlayersView,
+    AdminSzfbWatchSettingsCreateView,
+    AdminSzfbWatchSettingsUpdateView,
+)
+
+urlpatterns = [
+    path(
+        "club-players/",
+        AdminClubPlayerListView.as_view(),
+        name="admin-szfb-club-player-list",
+    ),
+    path(
+        "club-players/<int:player_id>/",
+        AdminClubPlayerUpdateView.as_view(),
+        name="admin-szfb-club-player-update",
+    ),
+    path(
+        "watches/",
+        AdminSzfbTeamWatchListView.as_view(),
+        name="admin-szfb-watch-list",
+    ),
+    path(
+        "competitions/",
+        AdminSzfbCompetitionListView.as_view(),
+        name="admin-szfb-competition-list",
+    ),
+    path(
+        "competitions/<int:competition_id>/sync/",
+        AdminSzfbCompetitionSyncView.as_view(),
+        name="admin-szfb-competition-sync",
+    ),
+    path(
+        "competitions/<int:competition_id>/standings/",
+        AdminSzfbCompetitionStandingsView.as_view(),
+        name="admin-szfb-competition-standings",
+    ),
+    path(
+        "watches/<int:watch_id>/matches/",
+        AdminSzfbWatchMatchesView.as_view(),
+        name="admin-szfb-watch-matches",
+    ),
+    path(
+        "watches/<int:watch_id>/players/",
+        AdminSzfbWatchPlayersView.as_view(),
+        name="admin-szfb-watch-players",
+    ),
+    path(
+        "players/<int:player_id>/",
+        AdminSzfbPlayerStatUpdateView.as_view(),
+        name="admin-szfb-player-update",
+    ),
+    path(
+        "settings/",
+        AdminSzfbWatchSettingsCreateView.as_view(),
+        name="admin-szfb-watch-settings-create",
+    ),
+    path(
+        "watches/<int:watch_id>/settings/",
+        AdminSzfbWatchSettingsUpdateView.as_view(),
+        name="admin-szfb-watch-settings-update",
+    ),
+]

@@ -1,22 +1,50 @@
+from threading import Thread
+
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
+from rest_framework import status
 from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.scraper.models import SzfbTeamWatch
+from apps.scraper.models import (
+    ClubPlayer,
+    SzfbCompetition,
+    SzfbMatch,
+    SzfbPlayerStat,
+    SzfbStandingRow,
+    SzfbTeamWatch,
+)
 from apps.scraper.serializers import (
+    AdminClubPlayerSerializer,
+    AdminClubPlayerUpdateSerializer,
+    AdminSzfbCompetitionSerializer,
+    AdminSzfbMatchSerializer,
+    AdminSzfbPlayerStatSerializer,
+    AdminSzfbPlayerStatsOnlySerializer,
+    AdminSzfbPlayerStatUpdateSerializer,
+    AdminSzfbStandingRowSerializer,
+    AdminSzfbWatchSettingsSerializer,
     SzfbMatchSerializer,
     SzfbPlayerStatSerializer,
     SzfbStandingRowSerializer,
+    SzfbTeamWatchAdminSerializer,
     SzfbTeamWatchSerializer,
+)
+from apps.scraper.services.szfb_sync_runner import (
+    can_start_competition_sync,
+    expire_stale_running_competition_syncs,
+    run_competition_sync,
 )
 
 
 class SzfbTeamWatchDetailView(RetrieveAPIView):
-    queryset = SzfbTeamWatch.objects.select_related("competition")
+    queryset = SzfbTeamWatch.objects.select_related("competition", "club")
     serializer_class = SzfbTeamWatchSerializer
 
 
@@ -27,7 +55,7 @@ class SzfbWatchStandingsView(ListAPIView):
         watch_id = self.kwargs["watch_id"]
 
         watch = get_object_or_404(
-            SzfbTeamWatch.objects.select_related("competition"),
+            SzfbTeamWatch.objects.select_related("competition", "club"),
             id=watch_id,
         )
 
@@ -41,7 +69,7 @@ class SzfbWatchResultsView(ListAPIView):
         watch_id = self.kwargs["watch_id"]
 
         watch = get_object_or_404(
-            SzfbTeamWatch,
+            SzfbTeamWatch.objects.select_related("competition", "club"),
             id=watch_id,
         )
 
@@ -59,7 +87,7 @@ class SzfbWatchUpcomingView(ListAPIView):
         watch_id = self.kwargs["watch_id"]
 
         watch = get_object_or_404(
-            SzfbTeamWatch,
+            SzfbTeamWatch.objects.select_related("competition", "club"),
             id=watch_id,
         )
 
@@ -73,7 +101,7 @@ class SzfbWatchUpcomingView(ListAPIView):
 class SzfbWatchDashboardView(APIView):
     def get(self, request, watch_id):
         watch = get_object_or_404(
-            SzfbTeamWatch.objects.select_related("competition"),
+            SzfbTeamWatch.objects.select_related("competition", "club"),
             id=watch_id,
         )
 
@@ -91,7 +119,11 @@ class SzfbWatchDashboardView(APIView):
             .order_by("match_date", "match_time")[:8]
         )
 
-        player_stats = watch.player_stats.order_by("rank")[:8]
+        player_stats = (
+            watch.player_stats
+            .select_related("club_player")
+            .order_by("club_player__display_order", "rank", "player_name")[:8]
+        )
 
         return Response(
             {
@@ -100,10 +132,10 @@ class SzfbWatchDashboardView(APIView):
                 "results": SzfbMatchSerializer(results, many=True).data,
                 "upcoming": SzfbMatchSerializer(upcoming, many=True).data,
                 "player_stats": SzfbPlayerStatSerializer(
-                                                            player_stats,
-                                                            many=True,
-                                                            context={"request": request},
-                                                        ).data
+                    player_stats,
+                    many=True,
+                    context={"request": request},
+                ).data,
             }
         )
 
@@ -113,7 +145,7 @@ class SzfbWatchNextMatchView(APIView):
         now = timezone.localtime()
 
         watch = get_object_or_404(
-            SzfbTeamWatch,
+            SzfbTeamWatch.objects.select_related("competition", "club"),
             id=watch_id,
         )
 
@@ -151,8 +183,378 @@ class SzfbWatchPlayerStatsView(ListAPIView):
         watch_id = self.kwargs["watch_id"]
 
         watch = get_object_or_404(
-            SzfbTeamWatch,
+            SzfbTeamWatch.objects.select_related("competition", "club"),
             id=watch_id,
         )
 
-        return watch.player_stats.order_by("rank")
+        return (
+            watch.player_stats
+            .select_related("club_player")
+            .order_by("club_player__display_order", "rank", "player_name")
+        )
+
+
+class AdminClubPlayerPagination(PageNumberPagination):
+    page_size = 25
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
+class AdminClubPlayerListView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AdminClubPlayerSerializer
+    pagination_class = AdminClubPlayerPagination
+
+    def get_queryset(self):
+        club_slug = self.request.query_params.get("club")
+        watch_id = self.request.query_params.get("watch")
+        season = self.request.query_params.get("season")
+        search = self.request.query_params.get("search", "").strip()
+        active = self.request.query_params.get("active")
+
+        queryset = (
+            ClubPlayer.objects
+            .select_related("club")
+            .prefetch_related(
+                "szfb_stats",
+                "szfb_stats__watched_team",
+                "szfb_stats__watched_team__competition",
+            )
+            .order_by("display_order", "full_name", "id")
+        )
+
+        if club_slug:
+            queryset = queryset.filter(club__slug=club_slug)
+        else:
+            queryset = queryset.none()
+
+        if watch_id:
+            queryset = queryset.filter(szfb_stats__watched_team_id=watch_id)
+
+        if season:
+            queryset = queryset.filter(
+                szfb_stats__watched_team__competition__season=season,
+            )
+
+        if search:
+            queryset = queryset.filter(full_name__icontains=search)
+
+        if active == "true":
+            queryset = queryset.filter(is_active=True)
+        elif active == "false":
+            queryset = queryset.filter(is_active=False)
+
+        return queryset.distinct()
+
+
+class AdminClubPlayerUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def patch(self, request, player_id):
+        player_queryset = ClubPlayer.objects.select_related("club").prefetch_related(
+            "szfb_stats",
+            "szfb_stats__watched_team",
+            "szfb_stats__watched_team__competition",
+        )
+
+        club_slug = request.data.get("club_slug") or request.query_params.get("club")
+
+        if club_slug:
+            player_queryset = player_queryset.filter(club__slug=club_slug)
+
+        player = get_object_or_404(player_queryset, id=player_id)
+
+        data = request.data.copy()
+        data.pop("club_slug", None)
+
+        serializer = AdminClubPlayerUpdateSerializer(
+            player,
+            data=data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        player.refresh_from_db()
+
+        return Response(
+            AdminClubPlayerSerializer(
+                player,
+                context={"request": request},
+            ).data
+        )
+
+
+class AdminSzfbTeamWatchListView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = SzfbTeamWatchAdminSerializer
+
+    def get_queryset(self):
+        expire_stale_running_competition_syncs()
+
+        queryset = (
+            SzfbTeamWatch.objects
+            .select_related("competition", "club")
+            .order_by("label")
+        )
+
+        club_slug = self.request.query_params.get("club")
+
+        if club_slug:
+            queryset = queryset.filter(club__slug=club_slug)
+
+        return queryset
+
+
+class AdminSzfbCompetitionListView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AdminSzfbCompetitionSerializer
+
+    def get_queryset(self):
+        expire_stale_running_competition_syncs()
+
+        queryset = (
+            SzfbCompetition.objects
+            .prefetch_related("watched_teams__club")
+            .order_by("-season", "name")
+        )
+
+        club_slug = self.request.query_params.get("club")
+        season = self.request.query_params.get("season")
+
+        if club_slug:
+            queryset = queryset.filter(watched_teams__club__slug=club_slug).distinct()
+
+        if season:
+            queryset = queryset.filter(season=season)
+
+        return queryset
+
+
+class AdminSzfbCompetitionStandingsView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AdminSzfbStandingRowSerializer
+
+    def get_queryset(self):
+        competition_id = self.kwargs["competition_id"]
+        club_slug = self.request.query_params.get("club")
+
+        competition_queryset = SzfbCompetition.objects.all()
+
+        if club_slug:
+            competition_queryset = competition_queryset.filter(
+                watched_teams__club__slug=club_slug,
+            )
+
+        get_object_or_404(
+            competition_queryset.distinct(),
+            id=competition_id,
+        )
+
+        return (
+            SzfbStandingRow.objects
+            .filter(competition_id=competition_id)
+            .order_by("position")
+        )
+
+
+class AdminSzfbWatchMatchesView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AdminSzfbMatchSerializer
+
+    def get_queryset(self):
+        watch_id = self.kwargs["watch_id"]
+        club_slug = self.request.query_params.get("club")
+
+        watch_queryset = SzfbTeamWatch.objects.all()
+
+        if club_slug:
+            watch_queryset = watch_queryset.filter(club__slug=club_slug)
+
+        get_object_or_404(watch_queryset, id=watch_id)
+
+        queryset = SzfbMatch.objects.filter(watched_team_id=watch_id)
+        match_type = self.request.query_params.get("type")
+
+        if match_type in {"finished", "upcoming"}:
+            queryset = queryset.filter(match_type=match_type)
+
+        return queryset.order_by("match_date", "match_time", "id")
+
+
+class AdminSzfbWatchPlayersView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AdminSzfbPlayerStatsOnlySerializer
+
+    def get_queryset(self):
+        watch_id = self.kwargs["watch_id"]
+        club_slug = self.request.query_params.get("club")
+
+        watch_queryset = SzfbTeamWatch.objects.all()
+
+        if club_slug:
+            watch_queryset = watch_queryset.filter(club__slug=club_slug)
+
+        get_object_or_404(watch_queryset, id=watch_id)
+
+        return (
+            SzfbPlayerStat.objects
+            .select_related(
+                "club_player",
+                "watched_team",
+                "watched_team__club",
+                "watched_team__competition",
+            )
+            .filter(watched_team_id=watch_id)
+            .order_by("club_player__display_order", "rank", "player_name", "id")
+        )
+
+
+class AdminSzfbCompetitionSyncView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, competition_id):
+        competition = get_object_or_404(
+            SzfbCompetition,
+            id=competition_id,
+        )
+
+        can_start, reason, next_allowed_at = can_start_competition_sync(
+            competition,
+        )
+
+        if not can_start:
+            response_status = status.HTTP_400_BAD_REQUEST
+
+            if reason in ["already_running", "rate_limited"]:
+                response_status = status.HTTP_409_CONFLICT
+
+            return Response(
+                {
+                    "status": "blocked",
+                    "reason": reason,
+                    "next_allowed_at": next_allowed_at,
+                },
+                status=response_status,
+            )
+
+        now = timezone.now()
+
+        SzfbCompetition.objects.filter(id=competition.id).update(
+            sync_status=SzfbCompetition.SYNC_STATUS_RUNNING,
+            sync_started_at=now,
+            sync_last_attempt_at=now,
+            sync_finished_at=None,
+            sync_error="",
+        )
+
+        try:
+            Thread(
+                target=run_competition_sync,
+                args=(competition.id,),
+                daemon=True,
+            ).start()
+        except Exception as exc:
+            SzfbCompetition.objects.filter(id=competition.id).update(
+                sync_status=SzfbCompetition.SYNC_STATUS_ERROR,
+                sync_finished_at=timezone.now(),
+                sync_error=str(exc)[:5000],
+            )
+            raise
+
+        return Response(
+            {
+                "status": "started",
+                "competition_id": competition.id,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class AdminSzfbPlayerStatUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def patch(self, request, player_id):
+        player_queryset = SzfbPlayerStat.objects.select_related(
+            "club_player",
+            "watched_team",
+            "watched_team__club",
+            "watched_team__competition",
+        )
+
+        club_slug = request.data.get("club_slug")
+
+        if club_slug:
+            player_queryset = player_queryset.filter(
+                watched_team__club__slug=club_slug,
+            )
+
+        player = get_object_or_404(
+            player_queryset,
+            id=player_id,
+        )
+
+        data = request.data.copy()
+        data.pop("club_slug", None)
+
+        serializer = AdminSzfbPlayerStatUpdateSerializer(
+            player,
+            data=data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        player.refresh_from_db()
+
+        return Response(
+            AdminSzfbPlayerStatSerializer(
+                player,
+                context={"request": request},
+            ).data
+        )
+
+
+class AdminSzfbWatchSettingsCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = AdminSzfbWatchSettingsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        watch = serializer.save()
+
+        return Response(
+            AdminSzfbWatchSettingsSerializer(watch).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminSzfbWatchSettingsUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, watch_id):
+        watch_queryset = SzfbTeamWatch.objects.select_related(
+            "competition",
+            "club",
+        )
+
+        club_slug = request.data.get("club_slug")
+
+        if club_slug:
+            watch_queryset = watch_queryset.filter(club__slug=club_slug)
+
+        watch = get_object_or_404(
+            watch_queryset,
+            id=watch_id,
+        )
+
+        serializer = AdminSzfbWatchSettingsSerializer(
+            watch,
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+        watch = serializer.save()
+
+        return Response(AdminSzfbWatchSettingsSerializer(watch).data)
