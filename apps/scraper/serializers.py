@@ -1,3 +1,6 @@
+from pathlib import Path
+from uuid import uuid4
+
 from rest_framework import serializers
 
 from apps.clubs.models import Club
@@ -673,6 +676,19 @@ class AdminClubPlayerUpdateSerializer(serializers.Serializer):
 
         return self.parse_optional_int(value, "display_order")
 
+    def normalize_uploaded_photo_name(self, uploaded_file):
+        if not uploaded_file:
+            return uploaded_file
+
+        original_name = uploaded_file.name or ""
+        suffix = Path(original_name).suffix.lower()
+
+        if len(suffix) > 10:
+            suffix = ""
+
+        uploaded_file.name = f"club-player-{uuid4().hex}{suffix}"
+        return uploaded_file
+
     def validate(self, attrs):
         optional_number_fields = [
             "birth_year",
@@ -692,6 +708,9 @@ class AdminClubPlayerUpdateSerializer(serializers.Serializer):
             attrs["display_order"] = self.parse_display_order(
                 attrs["display_order"]
             )
+
+        if "photo" in attrs:
+            attrs["photo"] = self.normalize_uploaded_photo_name(attrs["photo"])
 
         instance = getattr(self, "instance", None)
 
