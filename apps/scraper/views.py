@@ -272,8 +272,14 @@ class AdminClubPlayerUpdateView(APIView):
 
         player = get_object_or_404(player_queryset, id=player_id)
 
-        data = request.data.copy()
-        data.pop("club_slug", None)
+        data = {
+            key: request.data.get(key)
+            for key in request.data.keys()
+            if key != "club_slug" and key != "photo"
+        }
+
+        if "photo" in request.FILES:
+            data["photo"] = request.FILES["photo"]
 
         serializer = AdminClubPlayerUpdateSerializer(
             player,
