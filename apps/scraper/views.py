@@ -1,6 +1,6 @@
 from threading import Thread
 
-from django.db.models import Q
+from django.db.models import Count, Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -17,6 +17,7 @@ from apps.scraper.models import (
     SzfbCompetition,
     SzfbMatch,
     SzfbPlayerStat,
+    SzfbAutoSyncConfig,
     SzfbStandingRow,
     SzfbTeamWatch,
 )
@@ -26,7 +27,7 @@ from apps.scraper.serializers import (
     AdminSzfbCompetitionSerializer,
     AdminSzfbMatchSerializer,
     AdminSzfbPlayerStatSerializer,
-    AdminSzfbPlayerStatsOnlySerializer,
+    AdminSzfbAutoSyncConfigSerializer,
     AdminSzfbPlayerStatUpdateSerializer,
     AdminSzfbStandingRowSerializer,
     AdminSzfbWatchSettingsSerializer,
@@ -195,9 +196,15 @@ class SzfbWatchPlayerStatsView(ListAPIView):
 
 
 class AdminClubPlayerPagination(PageNumberPagination):
-    page_size = 25
+    page_size = 10
     page_size_query_param = "page_size"
-    max_page_size = 100
+    max_page_size = 10
+
+
+class AdminSzfbPlayerStatsPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = "page_size"
+    max_page_size = 50
 
 
 class AdminClubPlayerListView(ListAPIView):
@@ -314,22 +321,56 @@ class AdminSzfbCompetitionListView(ListAPIView):
     def get_queryset(self):
         expire_stale_running_competition_syncs()
 
-        queryset = (
-            SzfbCompetition.objects
-            .prefetch_related("watched_teams__club")
-            .order_by("-season", "name")
-        )
-
         club_slug = self.request.query_params.get("club")
         season = self.request.query_params.get("season")
 
+        watched_team_queryset = (
+            SzfbTeamWatch.objects
+            .select_related("club")
+            .annotate(
+                matches_count=Count("matches", distinct=True),
+                finished_matches_count=Count(
+                    "matches",
+                    filter=Q(matches__match_type="finished"),
+                    distinct=True,
+                ),
+                upcoming_matches_count=Count(
+                    "matches",
+                    filter=Q(matches__match_type="upcoming"),
+                    distinct=True,
+                ),
+                player_stats_count=Count("player_stats", distinct=True),
+            )
+            .order_by("label", "team_name")
+        )
+
+        queryset = SzfbCompetition.objects.all()
+        watched_teams_count_filter = Q()
+
         if club_slug:
-            queryset = queryset.filter(watched_teams__club__slug=club_slug).distinct()
+            queryset = queryset.filter(watched_teams__club__slug=club_slug)
+            watched_team_queryset = watched_team_queryset.filter(club__slug=club_slug)
+            watched_teams_count_filter = Q(watched_teams__club__slug=club_slug)
 
         if season:
             queryset = queryset.filter(season=season)
 
-        return queryset
+        return (
+            queryset
+            .annotate(
+                standings_count=Count("standings", distinct=True),
+                watched_teams_count=Count(
+                    "watched_teams",
+                    filter=watched_teams_count_filter,
+                    distinct=True,
+                ),
+            )
+            .prefetch_related(
+                Prefetch("watched_teams", queryset=watched_team_queryset)
+            )
+            .distinct()
+            .order_by("-season", "name")
+        )
 
 
 class AdminSzfbCompetitionStandingsView(ListAPIView):
@@ -385,7 +426,8 @@ class AdminSzfbWatchMatchesView(ListAPIView):
 
 class AdminSzfbWatchPlayersView(ListAPIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = AdminSzfbPlayerStatsOnlySerializer
+    serializer_class = AdminSzfbPlayerStatSerializer
+    pagination_class = AdminSzfbPlayerStatsPagination
 
     def get_queryset(self):
         watch_id = self.kwargs["watch_id"]
@@ -558,3 +600,61 @@ class AdminSzfbWatchSettingsUpdateView(APIView):
         watch = serializer.save()
 
         return Response(AdminSzfbWatchSettingsSerializer(watch).data)
+class AdminSzfbAutoSyncConfigView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_config(self, club_slug):
+        if not club_slug:
+            return None
+
+        from apps.clubs.models import Club
+
+        club = get_object_or_404(Club, slug=club_slug)
+
+        config, created = SzfbAutoSyncConfig.objects.get_or_create(
+            club=club,
+            defaults={
+                "is_enabled": False,
+                "frequency": SzfbAutoSyncConfig.FREQUENCY_WEEKLY,
+                "weekday": SzfbAutoSyncConfig.WEEKDAY_MONDAY,
+            },
+        )
+
+        if created or not config.next_run_at:
+            config.refresh_next_run_at()
+
+        return config
+
+    def get(self, request):
+        club_slug = request.query_params.get("club", "")
+        config = self.get_config(club_slug)
+
+        if not config:
+            return Response(
+                {"detail": "Chýba club query parameter."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            AdminSzfbAutoSyncConfigSerializer(config).data
+        )
+
+    def patch(self, request):
+        club_slug = request.data.get("club_slug") or request.query_params.get("club", "")
+        config = self.get_config(club_slug)
+
+        if not config:
+            return Response(
+                {"detail": "Chýba club_slug."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = AdminSzfbAutoSyncConfigSerializer(
+            config,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(serializer.data)

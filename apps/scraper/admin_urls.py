@@ -12,6 +12,7 @@ from apps.scraper.views import (
     AdminSzfbWatchPlayersView,
     AdminSzfbWatchSettingsCreateView,
     AdminSzfbWatchSettingsUpdateView,
+    AdminSzfbAutoSyncConfigView,
 )
 
 urlpatterns = [
@@ -69,5 +70,10 @@ urlpatterns = [
         "watches/<int:watch_id>/settings/",
         AdminSzfbWatchSettingsUpdateView.as_view(),
         name="admin-szfb-watch-settings-update",
+    ),
+    path(
+    "auto-sync/",
+    AdminSzfbAutoSyncConfigView.as_view(),
+    name="admin-szfb-auto-sync-config",
     ),
 ]

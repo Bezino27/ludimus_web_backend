@@ -5,6 +5,7 @@ from apps.scraper.models import (
     ClubPlayer,
     SzfbCompetition,
     SzfbMatch,
+    SzfbAutoSyncConfig,
     SzfbPlayerStat,
     SzfbStandingRow,
     SzfbTeamWatch,
@@ -545,7 +546,6 @@ class AdminSzfbPlayerStatUpdateSerializer(serializers.Serializer):
 class AdminClubPlayerSerializer(serializers.ModelSerializer):
     photo_url = serializers.SerializerMethodField()
     categories = serializers.SerializerMethodField()
-    stats_summary = serializers.SerializerMethodField()
 
     class Meta:
         model = ClubPlayer
@@ -563,7 +563,6 @@ class AdminClubPlayerSerializer(serializers.ModelSerializer):
             "is_featured",
             "display_order",
             "categories",
-            "stats_summary",
         ]
 
     def get_photo_url(self, obj):
@@ -627,27 +626,6 @@ class AdminClubPlayerSerializer(serializers.ModelSerializer):
             reverse=True,
         )
 
-    def get_stats_summary(self, obj):
-        total_games = 0
-        total_goals = 0
-        total_assists = 0
-        total_points = 0
-        stats_count = 0
-
-        for stat in obj.szfb_stats.all():
-            stats_count += 1
-            total_games += stat.games or 0
-            total_goals += stat.goals or 0
-            total_assists += stat.assists or 0
-            total_points += stat.points or 0
-
-        return {
-            "total_games": total_games,
-            "total_goals": total_goals,
-            "total_assists": total_assists,
-            "total_points": total_points,
-            "stats_count": stats_count,
-        }
 
 
 class AdminClubPlayerUpdateSerializer(serializers.Serializer):
@@ -800,16 +778,16 @@ class AdminSzfbTeamWatchSummarySerializer(serializers.ModelSerializer):
     player_stats_count = serializers.SerializerMethodField()
 
     def get_matches_count(self, obj):
-        return obj.matches.count()
+        return getattr(obj, "matches_count", 0)
 
     def get_finished_matches_count(self, obj):
-        return obj.matches.filter(match_type="finished").count()
+        return getattr(obj, "finished_matches_count", 0)
 
     def get_upcoming_matches_count(self, obj):
-        return obj.matches.filter(match_type="upcoming").count()
+        return getattr(obj, "upcoming_matches_count", 0)
 
     def get_player_stats_count(self, obj):
-        return obj.player_stats.count()
+        return getattr(obj, "player_stats_count", 0)
 
     class Meta:
         model = SzfbTeamWatch
@@ -843,25 +821,16 @@ class AdminSzfbCompetitionSerializer(serializers.ModelSerializer):
         return request.query_params.get("club", "")
 
     def get_standings_count(self, obj):
-        return obj.standings.count()
+        return getattr(obj, "standings_count", 0)
 
     def get_watched_teams_count(self, obj):
-        queryset = obj.watched_teams.all()
-        club_slug = self.get_club_slug()
-
-        if club_slug:
-            queryset = queryset.filter(club__slug=club_slug)
-
-        return queryset.count()
+        return getattr(obj, "watched_teams_count", 0)
 
     def get_watched_teams(self, obj):
-        queryset = obj.watched_teams.order_by("label", "team_name")
-        club_slug = self.get_club_slug()
-
-        if club_slug:
-            queryset = queryset.filter(club__slug=club_slug)
-
-        return AdminSzfbTeamWatchSummarySerializer(queryset, many=True).data
+        return AdminSzfbTeamWatchSummarySerializer(
+            obj.watched_teams.all(),
+            many=True,
+        ).data
 
     class Meta:
         model = SzfbCompetition
@@ -1025,6 +994,64 @@ class AdminSzfbWatchSettingsSerializer(serializers.Serializer):
                 "competitor_id",
                 "is_active",
                 "club",
+            ]
+        )
+
+        return instance
+class AdminSzfbAutoSyncConfigSerializer(serializers.ModelSerializer):
+    club_slug = serializers.CharField(source="club.slug", read_only=True)
+    club_name = serializers.CharField(source="club.name", read_only=True)
+    next_run_at_preview = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SzfbAutoSyncConfig
+        fields = [
+            "id",
+            "club_slug",
+            "club_name",
+            "is_enabled",
+            "frequency",
+            "weekday",
+            "run_time",
+            "last_run_at",
+            "next_run_at",
+            "next_run_at_preview",
+            "last_status",
+            "last_message",
+        ]
+        read_only_fields = [
+            "id",
+            "club_slug",
+            "club_name",
+            "last_run_at",
+            "next_run_at",
+            "next_run_at_preview",
+            "last_status",
+            "last_message",
+        ]
+
+    def get_next_run_at_preview(self, obj):
+        return obj.calculate_next_run_at()
+
+    def update(self, instance, validated_data):
+        for field_name in [
+            "is_enabled",
+            "frequency",
+            "weekday",
+            "run_time",
+        ]:
+            if field_name in validated_data:
+                setattr(instance, field_name, validated_data[field_name])
+
+        instance.next_run_at = instance.calculate_next_run_at()
+        instance.save(
+            update_fields=[
+                "is_enabled",
+                "frequency",
+                "weekday",
+                "run_time",
+                "next_run_at",
+                "updated_at",
             ]
         )
 

@@ -1,7 +1,9 @@
+from datetime import datetime, time as datetime_time, timedelta
 import re
 import unicodedata
 
 from django.db import models
+from django.utils import timezone
 
 
 def normalize_player_name(value: str) -> str:
@@ -17,6 +19,10 @@ def build_club_player_identity_key(full_name: str, birth_year) -> str:
     normalized_name = normalize_player_name(full_name)
     normalized_birth_year = birth_year or ""
     return f"{normalized_name}|{normalized_birth_year}"
+
+
+def default_auto_sync_time():
+    return datetime_time(hour=6, minute=0)
 
 
 class SzfbCompetition(models.Model):
@@ -145,6 +151,135 @@ class ClubPlayer(models.Model):
             return f"{self.full_name} ({self.birth_year})"
 
         return self.full_name
+
+
+class SzfbAutoSyncConfig(models.Model):
+    FREQUENCY_DAILY = "daily"
+    FREQUENCY_WEEKLY = "weekly"
+
+    FREQUENCY_CHOICES = [
+        (FREQUENCY_DAILY, "Každý deň"),
+        (FREQUENCY_WEEKLY, "Každý týždeň"),
+    ]
+
+    WEEKDAY_MONDAY = 0
+    WEEKDAY_TUESDAY = 1
+    WEEKDAY_WEDNESDAY = 2
+    WEEKDAY_THURSDAY = 3
+    WEEKDAY_FRIDAY = 4
+    WEEKDAY_SATURDAY = 5
+    WEEKDAY_SUNDAY = 6
+
+    WEEKDAY_CHOICES = [
+        (WEEKDAY_MONDAY, "Pondelok"),
+        (WEEKDAY_TUESDAY, "Utorok"),
+        (WEEKDAY_WEDNESDAY, "Streda"),
+        (WEEKDAY_THURSDAY, "Štvrtok"),
+        (WEEKDAY_FRIDAY, "Piatok"),
+        (WEEKDAY_SATURDAY, "Sobota"),
+        (WEEKDAY_SUNDAY, "Nedeľa"),
+    ]
+
+    STATUS_IDLE = "idle"
+    STATUS_SUCCESS = "success"
+    STATUS_ERROR = "error"
+    STATUS_SKIPPED = "skipped"
+
+    STATUS_CHOICES = [
+        (STATUS_IDLE, "Neaktívne"),
+        (STATUS_SUCCESS, "Hotovo"),
+        (STATUS_ERROR, "Chyba"),
+        (STATUS_SKIPPED, "Preskočené"),
+    ]
+
+    club = models.OneToOneField(
+        "clubs.Club",
+        on_delete=models.CASCADE,
+        related_name="szfb_auto_sync_config",
+    )
+
+    is_enabled = models.BooleanField(default=False)
+    frequency = models.CharField(
+        max_length=20,
+        choices=FREQUENCY_CHOICES,
+        default=FREQUENCY_WEEKLY,
+    )
+    weekday = models.PositiveSmallIntegerField(
+        choices=WEEKDAY_CHOICES,
+        default=WEEKDAY_MONDAY,
+    )
+    run_time = models.TimeField(default=default_auto_sync_time)
+
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    next_run_at = models.DateTimeField(null=True, blank=True)
+
+    last_status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_IDLE,
+    )
+    last_message = models.TextField(blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "SZFB automatická synchronizácia"
+        verbose_name_plural = "SZFB automatické synchronizácie"
+
+    def __str__(self):
+        return f"{self.club} - SZFB auto sync"
+
+    def calculate_next_run_at(self, from_datetime=None):
+        current = timezone.localtime(from_datetime or timezone.now())
+        current_timezone = timezone.get_current_timezone()
+        run_time = self.run_time or default_auto_sync_time()
+
+        if isinstance(run_time, str):
+            hour, minute = run_time.split(":")[:2]
+            run_time = datetime_time(hour=int(hour), minute=int(minute))
+        if self.frequency == self.FREQUENCY_DAILY:
+            candidate_date = current.date()
+            candidate = timezone.make_aware(
+                datetime.combine(candidate_date, run_time),
+                current_timezone,
+            )
+
+            if candidate <= current:
+                candidate += timedelta(days=1)
+
+            return candidate
+
+        days_ahead = (self.weekday - current.weekday()) % 7
+        candidate_date = current.date() + timedelta(days=days_ahead)
+        candidate = timezone.make_aware(
+            datetime.combine(candidate_date, run_time),
+            current_timezone,
+        )
+
+        if candidate <= current:
+            candidate += timedelta(days=7)
+
+        return candidate
+
+    def refresh_next_run_at(self, from_datetime=None, save=True):
+        self.next_run_at = self.calculate_next_run_at(from_datetime)
+
+        if save:
+            self.save(update_fields=["next_run_at", "updated_at"])
+
+        return self.next_run_at
+
+    def is_due(self, now=None):
+        if not self.is_enabled:
+            return False
+
+        current = now or timezone.now()
+
+        if not self.next_run_at:
+            return False
+
+        return self.next_run_at <= current
 
 
 class SzfbMatch(models.Model):
