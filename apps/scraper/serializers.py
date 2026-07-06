@@ -644,7 +644,10 @@ class AdminClubPlayerUpdateSerializer(serializers.Serializer):
     display_order = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     def parse_optional_int(self, value, field_name):
-        if value in ["", None]:
+        if isinstance(value, str):
+            value = value.strip()
+
+        if value in ("", None):
             return None
 
         try:
@@ -661,13 +664,21 @@ class AdminClubPlayerUpdateSerializer(serializers.Serializer):
 
         return parsed_value
 
+    def parse_display_order(self, value):
+        if isinstance(value, str):
+            value = value.strip()
+
+        if value in ("", None):
+            return 0
+
+        return self.parse_optional_int(value, "display_order")
+
     def validate(self, attrs):
         optional_number_fields = [
             "birth_year",
             "jersey_number",
             "height_cm",
             "weight_kg",
-            "display_order",
         ]
 
         for field_name in optional_number_fields:
@@ -676,6 +687,11 @@ class AdminClubPlayerUpdateSerializer(serializers.Serializer):
                     attrs[field_name],
                     field_name,
                 )
+
+        if "display_order" in attrs:
+            attrs["display_order"] = self.parse_display_order(
+                attrs["display_order"]
+            )
 
         instance = getattr(self, "instance", None)
 
