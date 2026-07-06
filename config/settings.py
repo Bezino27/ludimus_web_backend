@@ -158,4 +158,6 @@ REST_FRAMEWORK = {
         "recruitment_form": "5/hour",
     },
 }
-SZFB_SYNC_RATE_LIMIT_MINUTES = 0
+SZFB_SYNC_RATE_LIMIT_MINUTES = int(
+    os.getenv("SZFB_SYNC_RATE_LIMIT_MINUTES", "1440")
+)
