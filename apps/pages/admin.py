@@ -1,5 +1,5 @@
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.forms.models import BaseInlineFormSet
 from django.utils.html import format_html
 
@@ -229,6 +229,41 @@ class PageAdmin(admin.ModelAdmin):
         return format_html("<code>{}</code>", obj.get_public_path())
 
     public_path_preview.short_description = "URL"
+
+    def has_delete_permission(self, request, obj=None):
+        has_permission = super().has_delete_permission(request, obj)
+
+        if not has_permission:
+            return False
+
+        if obj is not None and not obj.is_deletable:
+            return False
+
+        return True
+
+    def delete_model(self, request, obj):
+        if not obj.is_deletable:
+            self.message_user(
+                request,
+                "Túto systémovú stránku nie je možné odstrániť.",
+                level=messages.ERROR,
+            )
+            return
+
+        super().delete_model(request, obj)
+
+    def delete_queryset(self, request, queryset):
+        protected_pages = queryset.exclude(page_type="custom")
+
+        if protected_pages.exists():
+            self.message_user(
+                request,
+                "Systémové stránky nie je možné odstrániť.",
+                level=messages.ERROR,
+            )
+            queryset = queryset.filter(page_type="custom")
+
+        super().delete_queryset(request, queryset)
 
 
 # # PAGE SECTION ADMIN

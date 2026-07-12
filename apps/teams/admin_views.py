@@ -42,7 +42,7 @@ class AdminCategoryViewSet(viewsets.ModelViewSet):
 
         queryset = Category.objects.filter(
             club_id__in=club_ids,
-        ).select_related("club").order_by("club__name", "season", "order", "name")
+        ).select_related("club", "szfb_team_watch", "szfb_team_watch__competition").order_by("club__name", "season", "order", "name")
 
         club_slug = self.request.query_params.get("club")
         if club_slug:

@@ -1,6 +1,8 @@
 from rest_framework import serializers
 
 from .models import Category, ClubSeason
+from apps.scraper.models import SzfbTeamWatch
+
 from .serializers import format_display_years, get_category_szfb_watch
 
 
@@ -8,6 +10,15 @@ class AdminCategorySerializer(serializers.ModelSerializer):
     club_name = serializers.CharField(source="club.name", read_only=True)
     display_years = serializers.SerializerMethodField()
     hero_image_url = serializers.SerializerMethodField()
+    szfb_team_watch = serializers.PrimaryKeyRelatedField(
+        queryset=SzfbTeamWatch.objects.select_related("club", "competition"),
+        required=False,
+        allow_null=True,
+    )
+    szfb_team_watch_id = serializers.SerializerMethodField()
+    szfb_team_watch_label = serializers.SerializerMethodField()
+    szfb_team_watch_competition_name = serializers.SerializerMethodField()
+    szfb_team_watch_competition_season = serializers.SerializerMethodField()
     szfb_watch_id = serializers.SerializerMethodField()
     szfb_watch_label = serializers.SerializerMethodField()
     szfb_competition_name = serializers.SerializerMethodField()
@@ -33,6 +44,11 @@ class AdminCategorySerializer(serializers.ModelSerializer):
             "coach_phone",
             "order",
             "is_active",
+            "szfb_team_watch",
+            "szfb_team_watch_id",
+            "szfb_team_watch_label",
+            "szfb_team_watch_competition_name",
+            "szfb_team_watch_competition_season",
             "szfb_watch_id",
             "szfb_watch_label",
             "szfb_competition_name",
@@ -44,6 +60,10 @@ class AdminCategorySerializer(serializers.ModelSerializer):
             "club_name",
             "display_years",
             "hero_image_url",
+            "szfb_team_watch_id",
+            "szfb_team_watch_label",
+            "szfb_team_watch_competition_name",
+            "szfb_team_watch_competition_season",
             "szfb_watch_id",
             "szfb_watch_label",
             "szfb_competition_name",
@@ -64,15 +84,15 @@ class AdminCategorySerializer(serializers.ModelSerializer):
 
         return None
 
-    def get_szfb_watch_id(self, obj):
+    def get_szfb_team_watch_id(self, obj):
         watch = get_category_szfb_watch(obj)
         return watch.id if watch else None
 
-    def get_szfb_watch_label(self, obj):
+    def get_szfb_team_watch_label(self, obj):
         watch = get_category_szfb_watch(obj)
         return getattr(watch, "label", None) if watch else None
 
-    def get_szfb_competition_name(self, obj):
+    def get_szfb_team_watch_competition_name(self, obj):
         watch = get_category_szfb_watch(obj)
 
         if not watch:
@@ -80,6 +100,24 @@ class AdminCategorySerializer(serializers.ModelSerializer):
 
         competition = getattr(watch, "competition", None)
         return getattr(competition, "name", None) if competition else None
+
+    def get_szfb_team_watch_competition_season(self, obj):
+        watch = get_category_szfb_watch(obj)
+
+        if not watch:
+            return None
+
+        competition = getattr(watch, "competition", None)
+        return getattr(competition, "season", None) if competition else None
+
+    def get_szfb_watch_id(self, obj):
+        return self.get_szfb_team_watch_id(obj)
+
+    def get_szfb_watch_label(self, obj):
+        return self.get_szfb_team_watch_label(obj)
+
+    def get_szfb_competition_name(self, obj):
+        return self.get_szfb_team_watch_competition_name(obj)
 
     def validate(self, attrs):
         birth_year_from = attrs.get(
@@ -100,6 +138,33 @@ class AdminCategorySerializer(serializers.ModelSerializer):
             if birth_year_from > 2100 or birth_year_to > 2100:
                 raise serializers.ValidationError(
                     "Roky narodenia sú príliš vysoké."
+                )
+
+        instance = getattr(self, "instance", None)
+        club = attrs.get("club", getattr(instance, "club", None))
+        season = attrs.get("season", getattr(instance, "season", ""))
+        watch = attrs.get("szfb_team_watch", getattr(instance, "szfb_team_watch", None))
+
+        if watch:
+            if not club:
+                raise serializers.ValidationError({"club": "Klub je povinný."})
+
+            if watch.club_id and watch.club_id != club.id:
+                raise serializers.ValidationError(
+                    {"szfb_team_watch": "SZFB sledovanie musí patriť rovnakému klubu."}
+                )
+
+            competition = getattr(watch, "competition", None)
+            watch_season = getattr(competition, "season", "") if competition else ""
+
+            if season and watch_season and season != watch_season:
+                raise serializers.ValidationError(
+                    {
+                        "szfb_team_watch": (
+                            "SZFB sledovanie je z inej sezóny "
+                            f"({watch_season})."
+                        )
+                    }
                 )
 
         return attrs

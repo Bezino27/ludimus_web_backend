@@ -72,6 +72,10 @@ class AdminPageViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         if not user_has_club_role(self.request.user, instance.club, EDITOR_ROLES):
             raise PermissionDenied("Nemáš oprávnenie zmazať túto stránku.")
+
+        if not instance.is_deletable:
+            raise PermissionDenied("Túto systémovú stránku nie je možné odstrániť.")
+
         page = instance
         instance.delete()
         revalidate_page(page, reason="Page deleted via admin API")

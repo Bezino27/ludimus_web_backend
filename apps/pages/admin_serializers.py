@@ -231,6 +231,7 @@ class AdminPageSectionContactItemSerializer(serializers.ModelSerializer):
 class AdminPageSerializer(serializers.ModelSerializer):
     club_name = serializers.CharField(source="club.name", read_only=True)
     public_path = serializers.CharField(source="get_public_path", read_only=True)
+    is_deletable = serializers.BooleanField(read_only=True)
     team_category_name = serializers.SerializerMethodField()
     team_category_slug = serializers.SerializerMethodField()
 
@@ -255,6 +256,7 @@ class AdminPageSerializer(serializers.ModelSerializer):
             "team_category_name",
             "team_category_slug",
             "public_path",
+            "is_deletable",
             "meta_title",
             "meta_description",
             "og_image",
@@ -265,6 +267,7 @@ class AdminPageSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "public_path",
+            "is_deletable",
             "team_category_name",
             "team_category_slug",
         ]

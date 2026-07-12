@@ -188,10 +188,18 @@ class PageSerializer(serializers.ModelSerializer):
         if not category:
             return None
 
+        watch = getattr(category, "szfb_team_watch", None)
+        competition = getattr(watch, "competition", None) if watch else None
+
         return {
             "id": category.id,
             "name": category.name,
             "slug": category.slug,
             "category_subname": category.category_subname,
             "league_name": category.league_name,
+            "szfb_team_watch_id": watch.id if watch else None,
+            "szfb_team_watch_label": watch.label if watch else None,
+            "szfb_team_watch_competition_name": competition.name if competition else None,
+            "szfb_team_watch_competition_season": competition.season if competition else None,
+            "szfb_watch_id": watch.id if watch else None,
         }

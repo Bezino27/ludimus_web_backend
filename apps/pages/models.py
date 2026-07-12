@@ -176,6 +176,10 @@ class Page(TimeStampedModel):
                 "team_category": "Napojená kategória musí patriť rovnakému klubu."
             })
 
+    @property
+    def is_deletable(self):
+        return self.page_type == "custom"
+
     def get_public_path(self):
         if self.is_homepage or self.page_type == "home" or self.slug == "home":
             return "/"

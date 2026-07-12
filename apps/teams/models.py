@@ -38,7 +38,15 @@ class Category(TimeStampedModel):
         blank=True,
         null=True,
         help_text="Hlavná fotka kategórie zobrazovaná v hero sekcii na webe."
-    )    
+    )
+    szfb_team_watch = models.ForeignKey(
+        "scraper.SzfbTeamWatch",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="team_categories",
+        help_text="SZFB sledovanie, z ktorého web číta tabuľku, zápasy a štatistiky."
+    )
 
     class Meta:
         unique_together = ("club", "slug", "season")

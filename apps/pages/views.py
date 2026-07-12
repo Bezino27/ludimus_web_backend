@@ -19,7 +19,7 @@ class ClubPageDetailView(generics.RetrieveAPIView):
                 club__is_active=True,
                 is_published=True,
             )
-            .select_related("club")
+            .select_related("club", "team_category", "team_category__szfb_team_watch", "team_category__szfb_team_watch__competition")
             .prefetch_related("sections", "sections__items", "sections__contact_items")
         )
 
@@ -36,7 +36,7 @@ class ClubPageHomeView(generics.RetrieveAPIView):
                 is_published=True,
                 is_homepage=True,
             )
-            .select_related("club")
+            .select_related("club", "team_category", "team_category__szfb_team_watch", "team_category__szfb_team_watch__competition")
             .prefetch_related("sections", "sections__items", "sections__contact_items")
             .get()
         )

@@ -14,7 +14,7 @@ class ClubCategoryListView(generics.ListAPIView):
             club__slug=self.kwargs["club_slug"],
             club__is_active=True,
             is_active=True,
-        ).select_related("club").order_by("order", "name")
+        ).select_related("club", "szfb_team_watch", "szfb_team_watch__competition").order_by("order", "name")
 
 
 class CategoryBirthYearsDetailView(generics.RetrieveAPIView):
@@ -26,7 +26,7 @@ class CategoryBirthYearsDetailView(generics.RetrieveAPIView):
             club__slug=self.kwargs["club_slug"],
             club__is_active=True,
             is_active=True,
-        ).select_related("club")
+        ).select_related("club", "szfb_team_watch", "szfb_team_watch__competition")
 class ClubSeasonDetailView(generics.RetrieveAPIView):
     serializer_class = ClubSeasonSerializer
 
