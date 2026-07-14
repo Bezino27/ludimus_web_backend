@@ -15,6 +15,7 @@ from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
 
 from django.core.files.storage import default_storage
+from apps.common.image_uploads import optimize_uploaded_image
 from .models import Post
 from apps.clubs.models import Club
 from apps.common.permissions import user_has_club_role, EDITOR_ROLES
@@ -98,7 +99,15 @@ class AdminPostImageUploadView(APIView):
         if not user_has_club_role(request.user, club, EDITOR_ROLES):
             raise PermissionDenied("Nemáš oprávnenie pre tento klub.")
 
-        file_path = default_storage.save(f"posts/content/{image.name}", image)
+        optimized_image = optimize_uploaded_image(
+            image,
+            "article",
+            filename_prefix="post-content-image",
+        )
+        file_path = default_storage.save(
+            f"posts/content/{optimized_image.name}",
+            optimized_image,
+        )
         file_url = request.build_absolute_uri(default_storage.url(file_path))
 
         return Response({
@@ -157,7 +166,15 @@ class AdminPostFeaturedImageUploadView(APIView):
         if not user_has_club_role(request.user, club, EDITOR_ROLES):
             return Response({"detail": "Nemáš oprávnenie pre tento klub."}, status=403)
 
-        file_path = default_storage.save(f"posts/featured/{image.name}", image)
+        optimized_image = optimize_uploaded_image(
+            image,
+            "article",
+            filename_prefix="post-featured-image",
+        )
+        file_path = default_storage.save(
+            f"posts/featured/{optimized_image.name}",
+            optimized_image,
+        )
         file_url = request.build_absolute_uri(default_storage.url(file_path))
 
         return Response({

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from apps.common.image_uploads import optimize_uploaded_image
 from .models import GalleryAlbum, GalleryImage
 from apps.common.permissions import user_has_club_role, EDITOR_ROLES
 
@@ -19,6 +20,14 @@ class AdminGalleryImageSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
+
+
+    def validate_image(self, image):
+        return optimize_uploaded_image(
+            image,
+            "gallery",
+            filename_prefix="gallery-image",
+        )
 
     def validate_album(self, album):
         request = self.context["request"]
@@ -47,6 +56,14 @@ class AdminGalleryAlbumSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
+
+
+    def validate_cover_image(self, cover_image):
+        return optimize_uploaded_image(
+            cover_image,
+            "gallery",
+            filename_prefix="gallery-cover",
+        )
 
     def validate_club(self, club):
         request = self.context["request"]

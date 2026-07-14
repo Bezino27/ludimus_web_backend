@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from apps.common.image_uploads import optimize_uploaded_image
 
 from .models import Page, PageSection, PageSectionContactItem, PageSectionItem
 from apps.common.permissions import user_has_club_role, EDITOR_ROLES
@@ -67,6 +68,12 @@ class AdminPageSectionSerializer(serializers.ModelSerializer):
 
         if section_type != "hero":
             attrs["image"] = None
+        elif "image" in attrs:
+            attrs["image"] = optimize_uploaded_image(
+                attrs["image"],
+                "hero",
+                filename_prefix="page-hero",
+            )
 
         if section_type not in {"documents", "custom_documents"}:
             attrs["file"] = None
