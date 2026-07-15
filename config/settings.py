@@ -105,6 +105,10 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
+POLL_OPTION_VIDEO_MAX_UPLOAD_SIZE = int(
+    os.getenv("POLL_OPTION_VIDEO_MAX_UPLOAD_SIZE", str(100 * 1024 * 1024))
+)
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CORS_ALLOWED_ORIGINS = [

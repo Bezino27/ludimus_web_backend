@@ -31,7 +31,19 @@ def filter_polls_by_club_param(queryset, request):
     return queryset.filter(club__slug=club_slug)
 
 
-def build_poll_results_response_data(poll):
+def get_video_file_url(option, request=None):
+    if not option.video_file:
+        return None
+
+    video_url = option.video_file.url
+
+    if request:
+        return request.build_absolute_uri(video_url)
+
+    return video_url
+
+
+def build_poll_results_response_data(poll, request=None):
     options = poll.options.annotate(
         votes_count=Count("votes")
     ).order_by("order", "id")
@@ -52,6 +64,9 @@ def build_poll_results_response_data(poll):
             {
                 "id": option.id,
                 "text": option.text,
+                "video_url": option.video_url,
+                "video_file": option.video_file.name if option.video_file else None,
+                "video_file_url": get_video_file_url(option, request),
                 "votes": votes_count,
                 "percent": percent,
             }
@@ -69,8 +84,8 @@ def build_poll_results_response_data(poll):
     }
 
 
-def serialize_polls_with_voter_state(polls, voter_id):
-    serializer = PollSerializer(polls, many=True)
+def serialize_polls_with_voter_state(polls, voter_id, request=None):
+    serializer = PollSerializer(polls, many=True, context={"request": request})
     data = serializer.data
 
     voted_poll_ids = set()
@@ -123,7 +138,7 @@ def poll_list_create_view(request):
         voter_id, voter_id_created = get_or_create_voter_id(request)
 
         response = Response(
-            serialize_polls_with_voter_state(polls, voter_id),
+            serialize_polls_with_voter_state(polls, voter_id, request),
             status=status.HTTP_200_OK,
         )
 
@@ -150,7 +165,7 @@ def poll_list_create_view(request):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            response_serializer = PollSerializer(poll)
+            response_serializer = PollSerializer(poll, context={"request": request})
 
             return Response(
                 response_serializer.data,
@@ -176,7 +191,7 @@ def poll_detail_view(request, poll_id):
         voter_id=voter_id,
     ).exists()
 
-    serializer = PollSerializer(poll)
+    serializer = PollSerializer(poll, context={"request": request})
 
     data = serializer.data
     data["has_voted"] = has_voted
@@ -318,7 +333,7 @@ def poll_results_view(request, poll_id):
     poll = get_object_or_404(Poll, id=poll_id)
 
     return Response(
-        build_poll_results_response_data(poll),
+        build_poll_results_response_data(poll, request),
         status=status.HTTP_200_OK,
     )
 
@@ -357,6 +372,6 @@ def latest_poll_result_view(request):
         return Response(None, status=status.HTTP_200_OK)
 
     return Response(
-        build_poll_results_response_data(poll),
+        build_poll_results_response_data(poll, request),
         status=status.HTTP_200_OK,
     )

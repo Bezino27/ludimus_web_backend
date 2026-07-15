@@ -7,15 +7,29 @@ from apps.common.permissions import EDITOR_ROLES, user_has_club_role
 from .models import Poll, PollOption
 
 
+def format_django_validation_error(error):
+    return getattr(error, "message_dict", None) or error.messages
+
+
 class PollOptionAdminSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(required=False)
     votes_count = serializers.SerializerMethodField()
+    video_file_url = serializers.SerializerMethodField()
+    remove_video_file = serializers.BooleanField(
+        required=False,
+        write_only=True,
+        default=False,
+    )
 
     class Meta:
         model = PollOption
         fields = [
             "id",
             "text",
+            "video_url",
+            "video_file",
+            "video_file_url",
+            "remove_video_file",
             "order",
             "votes_count",
         ]
@@ -25,6 +39,18 @@ class PollOptionAdminSerializer(serializers.ModelSerializer):
             return obj.votes_count
 
         return obj.votes.count()
+
+    def get_video_file_url(self, obj):
+        if not obj.video_file:
+            return None
+
+        request = self.context.get("request")
+        video_url = obj.video_file.url
+
+        if request:
+            return request.build_absolute_uri(video_url)
+
+        return video_url
 
 
 class PollAdminSerializer(serializers.ModelSerializer):
@@ -109,7 +135,13 @@ class PollAdminSerializer(serializers.ModelSerializer):
         except DjangoValidationError as error:
             raise serializers.ValidationError({"detail": error.messages})
 
-        self._sync_options(poll, options_data)
+        try:
+            self._sync_options(poll, options_data)
+        except DjangoValidationError as error:
+            raise serializers.ValidationError({
+                "options": format_django_validation_error(error),
+            })
+
         return poll
 
     @transaction.atomic
@@ -125,7 +157,12 @@ class PollAdminSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"detail": error.messages})
 
         if options_data is not None:
-            self._sync_options(instance, options_data)
+            try:
+                self._sync_options(instance, options_data)
+            except DjangoValidationError as error:
+                raise serializers.ValidationError({
+                    "options": format_django_validation_error(error),
+                })
 
         return instance
 
@@ -145,14 +182,21 @@ class PollAdminSerializer(serializers.ModelSerializer):
                     )
 
                 option.text = option_data["text"]
+                option.video_url = option_data.get("video_url", "")
+                if option_data.get("remove_video_file"):
+                    option.video_file = None
+                elif option_data.get("video_file") is not None:
+                    option.video_file = option_data.get("video_file")
                 option.order = option_data.get("order", index)
-                option.save(update_fields=["text", "order"])
+                option.save()
                 seen_option_ids.add(option_id)
                 continue
 
             option = PollOption.objects.create(
                 poll=poll,
                 text=option_data["text"],
+                video_url=option_data.get("video_url", ""),
+                video_file=option_data.get("video_file"),
                 order=option_data.get("order", index),
             )
             seen_option_ids.add(option.id)

@@ -5,15 +5,31 @@ from .models import Poll, PollOption, PollVote
 
 class PollOptionSerializer(serializers.ModelSerializer):
     votes_count = serializers.IntegerField(read_only=True)
+    video_file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = PollOption
         fields = (
             "id",
             "text",
+            "video_url",
+            "video_file",
+            "video_file_url",
             "order",
             "votes_count",
         )
+
+    def get_video_file_url(self, obj):
+        if not obj.video_file:
+            return None
+
+        request = self.context.get("request")
+        video_url = obj.video_file.url
+
+        if request:
+            return request.build_absolute_uri(video_url)
+
+        return video_url
 
 
 class PollSerializer(serializers.ModelSerializer):
@@ -38,6 +54,8 @@ class PollSerializer(serializers.ModelSerializer):
 
 class PollCreateOptionSerializer(serializers.Serializer):
     text = serializers.CharField(max_length=255)
+    video_url = serializers.URLField(required=False, allow_blank=True, default="")
+    video_file = serializers.FileField(required=False, allow_null=True)
     order = serializers.IntegerField(required=False, default=0)
 
 
@@ -75,6 +93,8 @@ class PollCreateSerializer(serializers.ModelSerializer):
             PollOption.objects.create(
                 poll=poll,
                 text=option_data["text"],
+                video_url=option_data.get("video_url", ""),
+                video_file=option_data.get("video_file"),
                 order=option_data.get("order", index),
             )
 

@@ -1,6 +1,10 @@
+import re
+
 from django.db.models import Count, Prefetch, Q
+from django.http import QueryDict
 from rest_framework import viewsets
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 
 from apps.clubs.models import ClubMembership
@@ -13,6 +17,14 @@ from .models import Poll, PollOption
 class AdminPollViewSet(viewsets.ModelViewSet):
     serializer_class = PollAdminSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    option_field_pattern = re.compile(r"^options\[(?P<index>\d+)\]\[(?P<field>[a-zA-Z0-9_]+)\]$")
+
+    def get_serializer(self, *args, **kwargs):
+        if "data" in kwargs and self._is_multipart_request():
+            kwargs["data"] = self._normalize_multipart_poll_data(kwargs["data"])
+
+        return super().get_serializer(*args, **kwargs)
 
     def get_queryset(self):
         user = self.request.user
@@ -82,3 +94,55 @@ class AdminPollViewSet(viewsets.ModelViewSet):
             return True
 
         return user_has_club_role(user, club, EDITOR_ROLES)
+
+    def _is_multipart_request(self):
+        return self.request.content_type.startswith("multipart/form-data")
+
+    def _normalize_multipart_poll_data(self, data):
+        if isinstance(data, QueryDict):
+            payload = {
+                key: value
+                for key, value in data.items()
+                if not self.option_field_pattern.match(key)
+            }
+        else:
+            payload = {
+                key: value
+                for key, value in dict(data).items()
+                if not self.option_field_pattern.match(key)
+            }
+
+        options_by_index = {}
+
+        for source in [self.request.data, self.request.FILES]:
+            for key, value in source.items():
+                match = self.option_field_pattern.match(key)
+
+                if not match:
+                    continue
+
+                index = int(match.group("index"))
+                field = match.group("field")
+                options_by_index.setdefault(index, {})[field] = value
+
+        options = []
+
+        for index in sorted(options_by_index):
+            option = options_by_index[index]
+
+            if option.get("id") == "":
+                option.pop("id", None)
+
+            if "remove_video_file" in option:
+                option["remove_video_file"] = str(option["remove_video_file"]).lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }
+
+            options.append(option)
+
+        payload["options"] = options
+
+        return payload

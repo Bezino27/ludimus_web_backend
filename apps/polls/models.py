@@ -1,7 +1,14 @@
 from itertools import combinations
+from pathlib import Path
+from urllib.parse import urlparse
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.files.storage import default_storage
+from django.core.validators import URLValidator
 from django.db import models
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 from django.utils import timezone
 
 
@@ -140,12 +147,17 @@ class Poll(models.Model):
 
 
 class PollOption(models.Model):
+    ALLOWED_VIDEO_FILE_EXTENSIONS = {".mp4", ".webm", ".mov"}
+    ALLOWED_VIDEO_FILE_MIME_TYPES = {"video/mp4", "video/webm", "video/quicktime"}
+
     poll = models.ForeignKey(
         Poll,
         on_delete=models.CASCADE,
         related_name="options",
     )
     text = models.CharField(max_length=255)
+    video_url = models.URLField(blank=True, default="")
+    video_file = models.FileField(upload_to="polls/videos/", blank=True, null=True)
     order = models.PositiveIntegerField(default=0)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -155,6 +167,96 @@ class PollOption(models.Model):
 
     def __str__(self):
         return f"{self.poll.question} - {self.text}"
+
+    def clean(self):
+        super().clean()
+
+        if self.video_file:
+            self._validate_video_file()
+
+        if not self.video_url:
+            return
+
+        URLValidator(schemes=["http", "https"])(self.video_url)
+        parsed_url = urlparse(self.video_url)
+        hostname = (parsed_url.hostname or "").lower()
+        path = parsed_url.path.lower()
+
+        is_youtube = (
+            hostname == "youtu.be" and bool(path.strip("/"))
+        ) or (
+            hostname in {"youtube.com", "www.youtube.com"}
+            and path == "/watch"
+            and bool(parsed_url.query)
+            and "v=" in parsed_url.query
+        )
+        is_vimeo = (
+            hostname in {"vimeo.com", "www.vimeo.com"}
+            and path.strip("/").isdigit()
+        ) or (
+            hostname == "player.vimeo.com"
+            and path.startswith("/video/")
+            and path.removeprefix("/video/").strip("/").isdigit()
+        )
+        is_mp4 = path.endswith(".mp4")
+
+        if not (is_youtube or is_vimeo or is_mp4):
+            raise ValidationError({
+                "video_url": "Podporované sú iba YouTube, Vimeo alebo priame MP4 URL."
+            })
+
+    def save(self, *args, **kwargs):
+        self.video_url = (self.video_url or "").strip()
+        old_video_file_name = self._get_old_video_file_name()
+
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+        if (
+            old_video_file_name
+            and old_video_file_name != (self.video_file.name if self.video_file else "")
+        ):
+            default_storage.delete(old_video_file_name)
+
+    def _get_old_video_file_name(self):
+        if not self.pk:
+            return ""
+
+        return (
+            PollOption.objects.filter(pk=self.pk)
+            .values_list("video_file", flat=True)
+            .first()
+            or ""
+        )
+
+    def _validate_video_file(self):
+        file_extension = Path(self.video_file.name).suffix.lower()
+
+        if file_extension not in self.ALLOWED_VIDEO_FILE_EXTENSIONS:
+            raise ValidationError({
+                "video_file": "Video súbor musí byť vo formáte MP4, WebM alebo MOV."
+            })
+
+        content_type = getattr(self.video_file.file, "content_type", "")
+
+        if content_type and content_type not in self.ALLOWED_VIDEO_FILE_MIME_TYPES:
+            raise ValidationError({
+                "video_file": "Nepodporovaný MIME typ video súboru."
+            })
+
+        max_size = getattr(settings, "POLL_OPTION_VIDEO_MAX_UPLOAD_SIZE", 100 * 1024 * 1024)
+        file_size = getattr(self.video_file, "size", 0)
+
+        if file_size and file_size > max_size:
+            raise ValidationError({
+                "video_file": "Video súbor môže mať najviac 100 MB."
+            })
+
+
+@receiver(post_delete, sender=PollOption)
+def delete_poll_option_video_file(sender, instance, **kwargs):
+    if instance.video_file:
+        default_storage.delete(instance.video_file.name)
 
 
 class PollVote(models.Model):
