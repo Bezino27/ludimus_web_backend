@@ -3,7 +3,24 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Page
-from .serializers import PageSerializer
+from .serializers import PageSerializer, PageSitemapSerializer
+
+
+class ClubPageListView(generics.ListAPIView):
+    serializer_class = PageSitemapSerializer
+
+    def get_queryset(self):
+        club_slug = self.kwargs["club_slug"]
+        return (
+            Page.objects.filter(
+                club__slug=club_slug,
+                club__is_active=True,
+                is_published=True,
+            )
+            .select_related("club")
+            .prefetch_related("sections", "sections__items", "sections__contact_items")
+            .order_by("navigation_order", "title")
+        )
 
 
 class ClubPageDetailView(generics.RetrieveAPIView):

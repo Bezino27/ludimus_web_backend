@@ -21,6 +21,7 @@ class PostListSerializer(serializers.ModelSerializer):
             "excerpt",
             "featured_image",
             "published_at",
+            "updated_at",
             "is_featured",
             "category",
             "club_slug",

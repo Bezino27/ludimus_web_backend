@@ -203,3 +203,38 @@ class PageSerializer(serializers.ModelSerializer):
             "szfb_team_watch_competition_season": competition.season if competition else None,
             "szfb_watch_id": watch.id if watch else None,
         }
+
+
+class PageSitemapSerializer(serializers.ModelSerializer):
+    public_path = serializers.CharField(source="get_public_path", read_only=True)
+    content_updated_at = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Page
+        fields = [
+            "id",
+            "slug",
+            "public_path",
+            "page_type",
+            "is_published",
+            "updated_at",
+            "content_updated_at",
+            "meta_title",
+            "meta_description",
+        ]
+
+    def get_content_updated_at(self, obj):
+        dates = [obj.updated_at]
+
+        for section in obj.sections.all():
+            dates.append(section.updated_at)
+
+            for item in section.items.all():
+                if item.is_active:
+                    dates.append(item.updated_at)
+
+            for contact_item in section.contact_items.all():
+                if contact_item.is_active:
+                    dates.append(contact_item.updated_at)
+
+        return max(date for date in dates if date is not None)
