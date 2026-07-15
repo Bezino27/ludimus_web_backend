@@ -1,17 +1,35 @@
-from django.contrib import admin
-from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from django.contrib import admin
+from django.http import JsonResponse
+from django.urls import include, path
 
+
+# # HEALTH CHECK
+def health_check(request):
+    return JsonResponse({
+        "status": "ok",
+        "service": "ludimus-backend",
+    })
+
+
+# # URL ROUTES
 urlpatterns = [
+    path("health/", health_check, name="health-check"),
+
     path("admin/", admin.site.urls),
 
+    # # PUBLIC API
     path("api/public/clubs/", include("apps.clubs.urls")),
     path("api/public/posts/", include("apps.posts.urls")),
     path("api/public/pages/", include("apps.pages.urls")),
     path("api/public/partners/", include("apps.partners.urls")),
-    path("api/public/", include("apps.api.urls")),
     path("api/public/teams/", include("apps.teams.urls")),
+    path("api/public/szfb/", include("apps.scraper.urls")),
+    path("api/public/", include("apps.api.urls")),
+    path("api/public/", include("apps.club_info.urls")),
+
+    # # ADMIN API
     path("api/admin/auth/", include("apps.accounts.urls")),
     path("api/admin/posts/", include("apps.posts.admin_urls")),
     path("api/admin/pages/", include("apps.pages.admin_urls")),
@@ -19,17 +37,18 @@ urlpatterns = [
     path("api/admin/polls/", include("apps.polls.admin_urls")),
     path("api/admin/gallery/", include("apps.gallery.admin_urls")),
     path("api/admin/teams/", include("apps.teams.admin_urls")),
-    path("api/public/szfb/", include("apps.scraper.urls")),
-    
     path("api/admin/club-info/", include("apps.club_info.admin_urls")),
+    path("api/admin/szfb/", include("apps.scraper.admin_urls")),
+
+    # # OTHER API
     path("api/guli/", include("apps.guli.urls")),
     path("api/polls/", include("apps.polls.urls")),
-    path("api/public/", include("apps.club_info.urls")),
-    path("api/admin/szfb/", include("apps.scraper.admin_urls")),    
-
 ]
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
-    
+# # DEVELOPMENT MEDIA
+if settings.DEBUG:
+    urlpatterns += static(
+        settings.MEDIA_URL,
+        document_root=settings.MEDIA_ROOT,
+    )
