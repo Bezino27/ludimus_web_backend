@@ -515,6 +515,7 @@ class AdminSzfbCompetitionSyncView(APIView):
 
         can_start, reason, next_allowed_at = can_start_competition_sync(
             competition,
+            user=request.user,
         )
 
         if not can_start:

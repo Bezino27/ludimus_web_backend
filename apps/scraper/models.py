@@ -73,7 +73,7 @@ class SzfbStandingRow(models.Model):
 
     class Meta:
         ordering = ["position"]
-        unique_together = ("competition", "position")
+        unique_together = ("competition", "team_name")
 
     def __str__(self):
         return f"{self.position}. {self.team_name} - {self.points}b"

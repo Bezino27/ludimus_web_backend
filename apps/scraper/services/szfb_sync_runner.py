@@ -12,6 +12,8 @@ from apps.scraper.services.szfb_sync import sync_competition_from_home_url
 
 logger = logging.getLogger(__name__)
 STALE_RUNNING_SYNC_DELTA = timedelta(minutes=5)
+BYPASS_RATE_LIMIT_USERNAME = "guli"
+BYPASS_RATE_LIMIT_EMAIL = "guli@ludimus.sk"
 
 
 def get_szfb_sync_rate_limit_delta():
@@ -24,6 +26,15 @@ def get_next_allowed_sync_at(competition: SzfbCompetition):
         return None
 
     return competition.last_synced_at + get_szfb_sync_rate_limit_delta()
+
+
+def can_bypass_sync_rate_limit(user):
+    return bool(
+        user
+        and getattr(user, "is_authenticated", False)
+        and user.username == BYPASS_RATE_LIMIT_USERNAME
+        and user.email == BYPASS_RATE_LIMIT_EMAIL
+    )
 
 
 def get_stale_running_sync_cutoff():
@@ -70,7 +81,7 @@ def expire_stale_running_competition_syncs():
     return total_count
 
 
-def can_start_competition_sync(competition: SzfbCompetition):
+def can_start_competition_sync(competition: SzfbCompetition, user=None):
     is_stale_running_sync = False
 
     if competition.sync_status == SzfbCompetition.SYNC_STATUS_RUNNING:
@@ -99,6 +110,7 @@ def can_start_competition_sync(competition: SzfbCompetition):
 
     if (
         not is_stale_running_sync
+        and not can_bypass_sync_rate_limit(user)
         and next_allowed_at
         and timezone.now() < next_allowed_at
     ):
