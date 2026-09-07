@@ -14,6 +14,7 @@ from apps.scraper.models import (
     ClubPlayer,
     SzfbCompetition,
     SzfbMatch,
+    SzfbMatchHistory,
     SzfbPlayerStat,
     SzfbStandingRow,
     SzfbTeamWatch,
@@ -29,6 +30,11 @@ from apps.scraper.services.szfb_sync_runner import (
     run_competition_sync,
 )
 from apps.scraper.services.szfb_scraper import classify_match_type
+from apps.scraper.services.szfb_sync import sync_competition_from_home_url
+from apps.scraper.services.szfb_match_history import (
+    get_match_history_for_watch,
+    persist_finished_match_history,
+)
 from apps.teams.models import Category
 
 
@@ -274,6 +280,108 @@ class SzfbAdminRevalidationTests(SzfbRevalidationTestMixin, TestCase):
         )
 
 
+class SzfbMatchHistoryTests(SzfbRevalidationTestMixin, TestCase):
+    def match_data(self, index=0, match_type="finished", result="5:3"):
+        return {
+            "match_type": match_type,
+            "match_date": timezone.localdate() - timedelta(days=index),
+            "match_time": None,
+            "opponent": f"Súper {index}",
+            "venue": "Hala",
+            "result": result,
+            "is_home": True,
+            "external_key": f"match-{index}",
+        }
+
+    def test_finished_match_is_saved_and_upcoming_is_not(self):
+        persist_finished_match_history(
+            self.watch,
+            [self.match_data(), self.match_data(1, match_type="upcoming", result=":")],
+        )
+
+        self.assertEqual(SzfbMatchHistory.objects.count(), 1)
+        self.assertEqual(SzfbMatchHistory.objects.get().opponent, "Súper 0")
+
+    def test_repeated_persistence_updates_without_duplicate(self):
+        match = self.match_data()
+        persist_finished_match_history(self.watch, [match])
+        match["venue"] = "Nová hala"
+        persist_finished_match_history(self.watch, [match])
+
+        self.assertEqual(SzfbMatchHistory.objects.count(), 1)
+        self.assertEqual(SzfbMatchHistory.objects.get().venue, "Nová hala")
+
+    def test_six_finished_matches_are_pruned_to_latest_five(self):
+        persist_finished_match_history(
+            self.watch,
+            [self.match_data(index) for index in range(6)],
+        )
+
+        history = list(get_match_history_for_watch(self.watch))
+        self.assertEqual(len(history), 5)
+        self.assertEqual([item.opponent for item in history], [f"Súper {i}" for i in range(5)])
+
+    def test_new_season_watch_uses_same_history(self):
+        persist_finished_match_history(self.watch, [self.match_data(1)])
+        new_competition = SzfbCompetition.objects.create(
+            szfb_competition_id=1242,
+            name="Extraliga 2026/27",
+            season="2026/2027",
+        )
+        new_watch = SzfbTeamWatch.objects.create(
+            label=self.watch.label,
+            competition=new_competition,
+            club=self.club,
+            team_name="FaBK ATU Košice nový názov",
+            competitor_id=999,
+        )
+        persist_finished_match_history(new_watch, [self.match_data(0)])
+
+        self.assertEqual(get_match_history_for_watch(new_watch).count(), 2)
+
+    def test_deleting_watch_does_not_delete_history(self):
+        persist_finished_match_history(self.watch, [self.match_data()])
+        self.watch.delete()
+
+        self.assertEqual(SzfbMatchHistory.objects.count(), 1)
+
+    @patch("apps.scraper.services.szfb_sync.fetch_matches")
+    @patch("apps.scraper.services.szfb_sync.extract_competition_info")
+    def test_normal_sync_persists_finished_match(
+        self,
+        extract_competition_info,
+        fetch_matches,
+    ):
+        self.watch.competitor_id = None
+        self.watch.save(update_fields=["competitor_id"])
+        extract_competition_info.return_value = {
+            "szfb_competition_id": self.competition.szfb_competition_id,
+            "name": self.competition.name,
+            "season": "2026/2027",
+            "source_url": self.competition.source_url,
+            "standings_url": "",
+            "results_url": "https://example.com/results",
+        }
+        fetch_matches.return_value = [
+            {
+                "match_type": "finished",
+                "match_date": timezone.localdate(),
+                "match_time": None,
+                "team1": self.watch.team_name,
+                "team2": "Súper",
+                "venue": "Hala",
+                "result": "5:3",
+            }
+        ]
+
+        sync_competition_from_home_url(
+            self.competition.source_url,
+            competition_id=self.competition.id,
+        )
+
+        self.assertEqual(SzfbMatchHistory.objects.count(), 1)
+
+
 class SzfbDashboardHistoricalResultsTests(SzfbRevalidationTestMixin, TestCase):
     def setUp(self):
         super().setUp()
@@ -289,30 +397,19 @@ class SzfbDashboardHistoricalResultsTests(SzfbRevalidationTestMixin, TestCase):
         self.assertFalse(
             self.watch.matches.filter(match_type="finished").exists()
         )
-        old_competition = SzfbCompetition.objects.create(
-            szfb_competition_id=1240,
-            name="Extraliga 2025/26",
-        )
-        old_watch = SzfbTeamWatch.objects.create(
-            label=self.watch.label,
-            competition=old_competition,
-            club=self.club,
-            team_name=self.watch.team_name,
-            competitor_id=self.watch.competitor_id,
-        )
         today = timezone.localdate()
-        old_matches = []
+        matches = []
         for index in range(4):
-            old_matches.append(
-                SzfbMatch.objects.create(
-                    watched_team=old_watch,
-                    match_type="finished",
-                    match_date=today - timedelta(days=index + 1),
-                    opponent=f"Súper {index}",
-                    result="5:3",
-                    external_key=f"old-{index}",
-                )
+            matches.append(
+                {
+                    "match_type": "finished",
+                    "match_date": today - timedelta(days=index + 1),
+                    "opponent": f"Súper {index}",
+                    "result": "5:3",
+                    "external_key": f"old-{index}",
+                }
             )
+        persist_finished_match_history(self.watch, matches)
 
         response = APIClient().get(
             reverse("szfb-watch-dashboard", kwargs={"watch_id": self.watch.id})
@@ -320,8 +417,8 @@ class SzfbDashboardHistoricalResultsTests(SzfbRevalidationTestMixin, TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            [item["id"] for item in response.data["results"]],
-            [match.id for match in old_matches],
+            [item["opponent"] for item in response.data["results"]],
+            [f"Súper {index}" for index in range(4)],
         )
 
     @patch("apps.scraper.views.schedule_revalidation")

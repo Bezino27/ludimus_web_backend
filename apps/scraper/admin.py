@@ -15,6 +15,7 @@ from .models import (
     SzfbStandingRow,
     SzfbTeamWatch,
     SzfbMatch,
+    SzfbMatchHistory,
     SzfbPlayerStat,
 )
 
@@ -191,6 +192,60 @@ class SzfbMatchAdmin(admin.ModelAdmin):
         "venue",
         "result",
     )
+
+
+@admin.register(SzfbMatchHistory)
+class SzfbMatchHistoryAdmin(admin.ModelAdmin):
+    list_display = (
+        "club",
+        "team_label",
+        "competition_season",
+        "match_date",
+        "match_time",
+        "opponent",
+        "result",
+        "is_home",
+    )
+    list_filter = (
+        "club",
+        "team_identity",
+        "competition_season",
+        "is_home",
+    )
+    search_fields = (
+        "team_label",
+        "team_name",
+        "opponent",
+        "competition_name",
+        "external_key",
+    )
+    readonly_fields = (
+        "club",
+        "team_identity",
+        "team_label",
+        "team_name",
+        "competitor_id",
+        "szfb_competition_id",
+        "competition_name",
+        "competition_season",
+        "match_date",
+        "match_time",
+        "opponent",
+        "venue",
+        "result",
+        "is_home",
+        "external_key",
+        "created_at",
+        "updated_at",
+    )
+    ordering = ("-match_date", "-match_time", "-id")
+    date_hierarchy = "match_date"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(ClubPlayer)

@@ -10,6 +10,7 @@ from apps.scraper.models import (
     build_club_player_identity_key,
     normalize_player_name,
 )
+from apps.scraper.services.szfb_match_history import persist_finished_match_history
 
 from apps.scraper.services.szfb_scraper import (
     build_players_productivity_url,
@@ -203,6 +204,7 @@ def sync_competition_from_home_url(home_url: str, competition_id: int | None = N
                 ],
                 ignore_conflicts=True,
             )
+            persist_finished_match_history(watch, filtered_matches)
 
     for watch in watches:
         if not watch.competitor_id:

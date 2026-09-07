@@ -312,6 +312,45 @@ class SzfbMatch(models.Model):
         return f"{self.watched_team.label} vs {self.opponent} ({self.match_type})"
 
 
+class SzfbMatchHistory(models.Model):
+    club = models.ForeignKey(
+        "clubs.Club",
+        on_delete=models.CASCADE,
+        related_name="szfb_match_history",
+    )
+    team_identity = models.CharField(max_length=255, db_index=True)
+    team_label = models.CharField(max_length=255, blank=True, default="")
+    team_name = models.CharField(max_length=255, blank=True, default="")
+    competitor_id = models.PositiveIntegerField(null=True, blank=True)
+
+    szfb_competition_id = models.PositiveIntegerField(null=True, blank=True)
+    competition_name = models.CharField(max_length=255, blank=True, default="")
+    competition_season = models.CharField(max_length=50, blank=True, default="")
+
+    match_date = models.DateField()
+    match_time = models.TimeField(null=True, blank=True)
+    opponent = models.CharField(max_length=255)
+    venue = models.CharField(max_length=255, blank=True, default="")
+    result = models.CharField(max_length=30)
+    is_home = models.BooleanField(null=True, blank=True)
+    external_key = models.CharField(max_length=255)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-match_date", "-match_time", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["club", "team_identity", "external_key"],
+                name="unique_szfb_match_history_entry",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.team_label or self.team_name} vs {self.opponent} ({self.result})"
+
+
 class SzfbPlayerStat(models.Model):
     watched_team = models.ForeignKey(
         SzfbTeamWatch,

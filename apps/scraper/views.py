@@ -31,6 +31,7 @@ from apps.scraper.serializers import (
     AdminSzfbStandingRowSerializer,
     AdminSzfbWatchSettingsSerializer,
     SzfbMatchSerializer,
+    SzfbMatchHistorySerializer,
     SzfbPlayerStatSerializer,
     SzfbStandingRowSerializer,
     SzfbTeamWatchAdminSerializer,
@@ -41,53 +42,13 @@ from apps.scraper.services.szfb_sync_runner import (
     expire_stale_running_competition_syncs,
     run_competition_sync,
 )
+from apps.scraper.services.szfb_match_history import get_match_history_for_watch
 from apps.common.revalidation import schedule_revalidation
 from apps.scraper.revalidation import (
     get_player_revalidation_paths,
     get_player_stat_revalidation_paths,
     get_watch_revalidation_paths,
 )
-
-
-def get_related_team_watches(watch):
-    if not watch.club_id:
-        return SzfbTeamWatch.objects.filter(pk=watch.pk)
-
-    identity = Q(label=watch.label, team_name=watch.team_name)
-    if watch.competitor_id:
-        identity |= Q(competitor_id=watch.competitor_id)
-
-    return SzfbTeamWatch.objects.filter(club_id=watch.club_id).filter(identity)
-
-
-def get_recent_finished_matches(watch, limit=4):
-    matches = (
-        SzfbMatch.objects.filter(
-            watched_team__in=get_related_team_watches(watch),
-            match_type="finished",
-            match_date__isnull=False,
-        )
-        .order_by("-match_date", "-match_time", "-id")
-    )
-
-    unique_matches = []
-    seen = set()
-    for match in matches:
-        identity = (
-            match.match_date,
-            match.match_time,
-            match.opponent,
-            match.result,
-            match.is_home,
-        )
-        if identity in seen:
-            continue
-        seen.add(identity)
-        unique_matches.append(match)
-        if len(unique_matches) == limit:
-            break
-
-    return unique_matches
 
 
 def get_upcoming_matches(watch):
@@ -167,7 +128,7 @@ class SzfbWatchDashboardView(APIView):
 
         standings = watch.competition.standings.order_by("position")
 
-        results = get_recent_finished_matches(watch)
+        results = get_match_history_for_watch(watch)[:5]
 
         upcoming = get_upcoming_matches(watch)[:8]
 
@@ -185,7 +146,7 @@ class SzfbWatchDashboardView(APIView):
             {
                 "watch": SzfbTeamWatchSerializer(watch).data,
                 "standings": SzfbStandingRowSerializer(standings, many=True).data,
-                "results": SzfbMatchSerializer(results, many=True).data,
+                "results": SzfbMatchHistorySerializer(results, many=True).data,
                 "upcoming": SzfbMatchSerializer(upcoming, many=True).data,
                 "player_stats": SzfbPlayerStatSerializer(
                     player_stats,

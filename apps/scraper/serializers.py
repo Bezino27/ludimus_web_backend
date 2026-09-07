@@ -7,6 +7,7 @@ from apps.scraper.models import (
     ClubPlayer,
     SzfbCompetition,
     SzfbMatch,
+    SzfbMatchHistory,
     SzfbAutoSyncConfig,
     SzfbPlayerStat,
     SzfbStandingRow,
@@ -41,6 +42,26 @@ class SzfbMatchSerializer(serializers.ModelSerializer):
             "result",
             "is_home",
         ]
+
+
+class SzfbMatchHistorySerializer(serializers.ModelSerializer):
+    match_type = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SzfbMatchHistory
+        fields = [
+            "id",
+            "match_type",
+            "match_date",
+            "match_time",
+            "opponent",
+            "venue",
+            "result",
+            "is_home",
+        ]
+
+    def get_match_type(self, _obj):
+        return "finished"
 
 
 class SzfbTeamWatchSerializer(serializers.ModelSerializer):
