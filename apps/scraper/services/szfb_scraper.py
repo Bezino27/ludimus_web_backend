@@ -523,6 +523,13 @@ def _extract_score_from_cell(cell):
     return ""
 
 
+def classify_match_type(result: str) -> str:
+    normalized_result = normalize_spaces(result or "")
+    if re.fullmatch(r"\d+\s*:\s*\d+", normalized_result):
+        return "finished"
+    return "upcoming"
+
+
 # # ZÁPASY
 
 def fetch_matches(results_url: str) -> list[dict]:
@@ -562,7 +569,7 @@ def fetch_matches(results_url: str) -> list[dict]:
         away_team = _extract_team_name_from_cell(away_cell)
         result = _extract_score_from_cell(score_cell)
 
-        if not home_team or not away_team or not result:
+        if not home_team or not away_team:
             continue
 
         date_value = None
@@ -598,7 +605,7 @@ def fetch_matches(results_url: str) -> list[dict]:
         if venue_el:
             venue = normalize_spaces(venue_el.get_text(" ", strip=True))
 
-        match_type = "upcoming" if result.upper() == "VS" else "finished"
+        match_type = classify_match_type(result)
 
         matches.append(
             {

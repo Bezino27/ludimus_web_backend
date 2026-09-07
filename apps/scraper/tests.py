@@ -1,4 +1,5 @@
 from unittest.mock import patch
+from datetime import timedelta
 
 from django.contrib import admin
 from django.contrib.auth import get_user_model
@@ -12,6 +13,7 @@ from apps.clubs.models import Club
 from apps.scraper.models import (
     ClubPlayer,
     SzfbCompetition,
+    SzfbMatch,
     SzfbPlayerStat,
     SzfbStandingRow,
     SzfbTeamWatch,
@@ -26,6 +28,7 @@ from apps.scraper.services.szfb_sync_runner import (
     can_start_competition_sync,
     run_competition_sync,
 )
+from apps.scraper.services.szfb_scraper import classify_match_type
 from apps.teams.models import Category
 
 
@@ -94,6 +97,20 @@ class SzfbStandingRowConstraintTests(TestCase):
             SzfbStandingRow.objects.create(
                 competition=self.competition, position=3, team_name="Tím A"
             )
+
+
+class SzfbMatchClassificationTests(TestCase):
+    def test_colon_is_upcoming(self):
+        self.assertEqual(classify_match_type(":"), "upcoming")
+
+    def test_empty_result_is_upcoming(self):
+        self.assertEqual(classify_match_type(""), "upcoming")
+
+    def test_real_score_is_finished(self):
+        self.assertEqual(classify_match_type("5:3"), "finished")
+
+    def test_spaced_colon_is_upcoming(self):
+        self.assertEqual(classify_match_type(" : "), "upcoming")
 
 
 class SzfbSyncStartGuardTests(TestCase):
@@ -254,6 +271,57 @@ class SzfbAdminRevalidationTests(SzfbRevalidationTestMixin, TestCase):
             ["/kategorie/muzi"],
             reason="ClubPlayer updated via admin API",
             club_slug="atu-kosice",
+        )
+
+
+class SzfbDashboardHistoricalResultsTests(SzfbRevalidationTestMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.create_category("muzi")
+        self.user = get_user_model().objects.create_user(
+            username="editor-dashboard",
+            password="password",
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_current_watch_returns_four_finished_matches_from_older_watch(self):
+        self.assertFalse(
+            self.watch.matches.filter(match_type="finished").exists()
+        )
+        old_competition = SzfbCompetition.objects.create(
+            szfb_competition_id=1240,
+            name="Extraliga 2025/26",
+        )
+        old_watch = SzfbTeamWatch.objects.create(
+            label=self.watch.label,
+            competition=old_competition,
+            club=self.club,
+            team_name=self.watch.team_name,
+            competitor_id=self.watch.competitor_id,
+        )
+        today = timezone.localdate()
+        old_matches = []
+        for index in range(4):
+            old_matches.append(
+                SzfbMatch.objects.create(
+                    watched_team=old_watch,
+                    match_type="finished",
+                    match_date=today - timedelta(days=index + 1),
+                    opponent=f"Súper {index}",
+                    result="5:3",
+                    external_key=f"old-{index}",
+                )
+            )
+
+        response = APIClient().get(
+            reverse("szfb-watch-dashboard", kwargs={"watch_id": self.watch.id})
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item["id"] for item in response.data["results"]],
+            [match.id for match in old_matches],
         )
 
     @patch("apps.scraper.views.schedule_revalidation")

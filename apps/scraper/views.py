@@ -49,6 +49,60 @@ from apps.scraper.revalidation import (
 )
 
 
+def get_related_team_watches(watch):
+    if not watch.club_id:
+        return SzfbTeamWatch.objects.filter(pk=watch.pk)
+
+    identity = Q(label=watch.label, team_name=watch.team_name)
+    if watch.competitor_id:
+        identity |= Q(competitor_id=watch.competitor_id)
+
+    return SzfbTeamWatch.objects.filter(club_id=watch.club_id).filter(identity)
+
+
+def get_recent_finished_matches(watch, limit=4):
+    matches = (
+        SzfbMatch.objects.filter(
+            watched_team__in=get_related_team_watches(watch),
+            match_type="finished",
+            match_date__isnull=False,
+        )
+        .order_by("-match_date", "-match_time", "-id")
+    )
+
+    unique_matches = []
+    seen = set()
+    for match in matches:
+        identity = (
+            match.match_date,
+            match.match_time,
+            match.opponent,
+            match.result,
+            match.is_home,
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique_matches.append(match)
+        if len(unique_matches) == limit:
+            break
+
+    return unique_matches
+
+
+def get_upcoming_matches(watch):
+    now = timezone.localtime()
+    return (
+        watch.matches.filter(match_type="upcoming")
+        .filter(
+            Q(match_date__gt=now.date())
+            | Q(match_date=now.date(), match_time__isnull=True)
+            | Q(match_date=now.date(), match_time__gte=now.time())
+        )
+        .order_by("match_date", "match_time", "id")
+    )
+
+
 class SzfbTeamWatchDetailView(RetrieveAPIView):
     queryset = SzfbTeamWatch.objects.select_related("competition", "club")
     serializer_class = SzfbTeamWatchSerializer
@@ -113,17 +167,9 @@ class SzfbWatchDashboardView(APIView):
 
         standings = watch.competition.standings.order_by("position")
 
-        results = (
-            watch.matches
-            .filter(match_type="finished")
-            .order_by("-match_date", "-match_time")[:8]
-        )
+        results = get_recent_finished_matches(watch)
 
-        upcoming = (
-            watch.matches
-            .filter(match_type="upcoming")
-            .order_by("match_date", "match_time")[:8]
-        )
+        upcoming = get_upcoming_matches(watch)[:8]
 
         player_stats = (
             watch.player_stats
@@ -152,23 +198,12 @@ class SzfbWatchDashboardView(APIView):
 
 class SzfbWatchNextMatchView(APIView):
     def get(self, request, watch_id):
-        now = timezone.localtime()
-
         watch = get_object_or_404(
             SzfbTeamWatch.objects.select_related("competition", "club"),
             id=watch_id,
         )
 
-        next_match = (
-            watch.matches
-            .filter(match_type="upcoming")
-            .filter(
-                Q(match_date__gt=now.date())
-                | Q(match_date=now.date(), match_time__gte=now.time())
-            )
-            .order_by("match_date", "match_time")
-            .first()
-        )
+        next_match = get_upcoming_matches(watch).first()
 
         if not next_match:
             return Response(
