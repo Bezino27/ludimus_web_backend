@@ -1,5 +1,13 @@
 from django.contrib import admin
 
+from apps.common.revalidation import schedule_revalidation
+
+from .revalidation import (
+    get_player_revalidation_paths,
+    get_player_stat_revalidation_paths,
+    get_watch_revalidation_paths,
+)
+
 from .models import (
     ClubPlayer,
     SzfbAutoSyncConfig,
@@ -144,6 +152,23 @@ class SzfbTeamWatchAdmin(admin.ModelAdmin):
         "competitor_id",
     )
 
+    def save_model(self, request, obj, form, change):
+        old_paths = []
+        if change and obj.pk:
+            old_paths = get_watch_revalidation_paths(SzfbTeamWatch.objects.get(pk=obj.pk))
+        super().save_model(request, obj, form, change)
+        schedule_revalidation(
+            [*old_paths, *get_watch_revalidation_paths(obj)],
+            reason="SZFB team watch saved in Django admin",
+            club_slug=obj.club.slug,
+        )
+
+    def delete_model(self, request, obj):
+        paths = get_watch_revalidation_paths(obj)
+        club_slug = obj.club.slug
+        super().delete_model(request, obj)
+        schedule_revalidation(paths, reason="SZFB team watch deleted in Django admin", club_slug=club_slug)
+
 
 @admin.register(SzfbMatch)
 class SzfbMatchAdmin(admin.ModelAdmin):
@@ -205,6 +230,20 @@ class ClubPlayerAdmin(admin.ModelAdmin):
         "display_order",
         "full_name",
     )
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        schedule_revalidation(
+            get_player_revalidation_paths(obj),
+            reason="Club player saved in Django admin",
+            club_slug=obj.club.slug,
+        )
+
+    def delete_model(self, request, obj):
+        paths = get_player_revalidation_paths(obj)
+        club_slug = obj.club.slug
+        super().delete_model(request, obj)
+        schedule_revalidation(paths, reason="Club player deleted in Django admin", club_slug=club_slug)
 
 
 @admin.register(SzfbPlayerStat)
@@ -278,6 +317,26 @@ class SzfbPlayerStatAdmin(admin.ModelAdmin):
             },
         ),
     )
+
+    def save_model(self, request, obj, form, change):
+        old_paths = []
+        if change and obj.pk:
+            old_obj = SzfbPlayerStat.objects.select_related(
+                "club_player", "watched_team"
+            ).get(pk=obj.pk)
+            old_paths = get_player_stat_revalidation_paths(old_obj)
+        super().save_model(request, obj, form, change)
+        schedule_revalidation(
+            [*old_paths, *get_player_stat_revalidation_paths(obj)],
+            reason="SZFB player stat saved in Django admin",
+            club_slug=obj.watched_team.club.slug,
+        )
+
+    def delete_model(self, request, obj):
+        paths = get_player_stat_revalidation_paths(obj)
+        club_slug = obj.watched_team.club.slug
+        super().delete_model(request, obj)
+        schedule_revalidation(paths, reason="SZFB player stat deleted in Django admin", club_slug=club_slug)
 
     ordering = (
         "watched_team",

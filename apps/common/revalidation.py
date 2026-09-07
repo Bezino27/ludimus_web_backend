@@ -3,6 +3,7 @@ import os
 from typing import Iterable
 
 import requests
+from django.db import transaction
 
 logger = logging.getLogger(__name__)
 
@@ -93,4 +94,37 @@ def revalidate_paths(
         reason,
         club_slug,
     )
+    return True
+
+
+def schedule_revalidation(
+    paths: list[str],
+    reason: str = "",
+    club_slug: str = "",
+) -> bool:
+    valid_paths = normalize_revalidation_paths(paths)
+
+    if not valid_paths:
+        logger.info(
+            "Next revalidation not scheduled: no valid paths. reason=%s",
+            reason,
+        )
+        return False
+
+    def run_revalidation():
+        try:
+            revalidate_paths(
+                valid_paths,
+                reason=reason,
+                club_slug=club_slug,
+            )
+        except Exception:
+            logger.exception(
+                "Unexpected Next revalidation error. paths=%s reason=%s club=%s",
+                valid_paths,
+                reason,
+                club_slug,
+            )
+
+    transaction.on_commit(run_revalidation)
     return True

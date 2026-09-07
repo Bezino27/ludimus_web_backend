@@ -1,5 +1,4 @@
 from threading import Thread
-
 from django.db.models import Count, Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -41,6 +40,12 @@ from apps.scraper.services.szfb_sync_runner import (
     can_start_competition_sync,
     expire_stale_running_competition_syncs,
     run_competition_sync,
+)
+from apps.common.revalidation import schedule_revalidation
+from apps.scraper.revalidation import (
+    get_player_revalidation_paths,
+    get_player_stat_revalidation_paths,
+    get_watch_revalidation_paths,
 )
 
 
@@ -123,7 +128,11 @@ class SzfbWatchDashboardView(APIView):
         player_stats = (
             watch.player_stats
             .select_related("club_player")
-            .order_by("club_player__display_order", "rank", "player_name")[:8]
+            .filter(
+                Q(club_player__is_active=True)
+                | Q(club_player__isnull=True, is_active=True)
+            )
+            .order_by("-points", "-goals", "-assists", "-games", "player_name")[:8]
         )
 
         return Response(
@@ -290,6 +299,11 @@ class AdminClubPlayerUpdateView(APIView):
         serializer.save()
 
         player.refresh_from_db()
+        schedule_revalidation(
+            get_player_revalidation_paths(player),
+            reason="ClubPlayer updated via admin API",
+            club_slug=player.club.slug,
+        )
 
         return Response(
             AdminClubPlayerSerializer(
@@ -297,6 +311,37 @@ class AdminClubPlayerUpdateView(APIView):
                 context={"request": request},
             ).data
         )
+    def delete(self, request, player_id):
+        player_queryset = ClubPlayer.objects.select_related("club").prefetch_related(
+            "szfb_stats",
+            "szfb_stats__watched_team",
+            "szfb_stats__watched_team__competition",
+        )
+
+        club_slug = request.query_params.get("club")
+
+        if club_slug:
+            player_queryset = player_queryset.filter(club__slug=club_slug)
+
+        player = get_object_or_404(player_queryset, id=player_id)
+
+        revalidation_paths = get_player_revalidation_paths(player)
+        club_slug = player.club.slug
+
+        player.szfb_stats.all().delete()
+
+        if player.photo:
+            player.photo.delete(save=False)
+
+        player.delete()
+
+        schedule_revalidation(
+            revalidation_paths,
+            reason="ClubPlayer deleted via admin API",
+            club_slug=club_slug,
+        )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class AdminSzfbTeamWatchListView(ListAPIView):
@@ -544,8 +589,14 @@ class AdminSzfbPlayerStatUpdateView(APIView):
             id=player_id,
         )
 
-        data = request.data.copy()
-        data.pop("club_slug", None)
+        data = {
+            key: request.data.get(key)
+            for key in request.data.keys()
+            if key not in {"club_slug", "photo"}
+        }
+
+        if "photo" in request.FILES:
+            data["photo"] = request.FILES["photo"]
 
         serializer = AdminSzfbPlayerStatUpdateSerializer(
             player,
@@ -556,6 +607,11 @@ class AdminSzfbPlayerStatUpdateView(APIView):
         serializer.save()
 
         player.refresh_from_db()
+        schedule_revalidation(
+            get_player_stat_revalidation_paths(player),
+            reason="SZFB player updated via admin API",
+            club_slug=player.watched_team.club.slug,
+        )
 
         return Response(
             AdminSzfbPlayerStatSerializer(
@@ -572,6 +628,11 @@ class AdminSzfbWatchSettingsCreateView(APIView):
         serializer = AdminSzfbWatchSettingsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         watch = serializer.save()
+        schedule_revalidation(
+            get_watch_revalidation_paths(watch),
+            reason="SZFB team watch created via admin API",
+            club_slug=watch.club.slug,
+        )
 
         return Response(
             AdminSzfbWatchSettingsSerializer(watch).data,
@@ -597,6 +658,7 @@ class AdminSzfbWatchSettingsUpdateView(APIView):
             watch_queryset,
             id=watch_id,
         )
+        old_paths = get_watch_revalidation_paths(watch)
 
         serializer = AdminSzfbWatchSettingsSerializer(
             watch,
@@ -604,6 +666,11 @@ class AdminSzfbWatchSettingsUpdateView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         watch = serializer.save()
+        schedule_revalidation(
+            [*old_paths, *get_watch_revalidation_paths(watch)],
+            reason="SZFB team watch updated via admin API",
+            club_slug=watch.club.slug,
+        )
 
         return Response(AdminSzfbWatchSettingsSerializer(watch).data)
 class AdminSzfbAutoSyncConfigView(APIView):

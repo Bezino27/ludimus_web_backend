@@ -5,6 +5,8 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.scraper.models import SzfbCompetition
+from apps.common.revalidation import schedule_revalidation
+from apps.scraper.revalidation import get_competition_revalidation_paths
 from apps.scraper.services.szfb_sync import sync_competition_from_home_url
 
 
@@ -129,6 +131,18 @@ def run_competition_sync(competition_id: int):
                 "sync_finished_at",
                 "sync_error",
             ]
+        )
+        club_slug = (
+            synced_competition.watched_teams
+            .filter(is_active=True, club__isnull=False)
+            .values_list("club__slug", flat=True)
+            .first()
+            or ""
+        )
+        schedule_revalidation(
+            get_competition_revalidation_paths(synced_competition),
+            reason="SZFB competition sync completed",
+            club_slug=club_slug,
         )
 
         print(f"SZFB sync success competition_id={competition_id}")

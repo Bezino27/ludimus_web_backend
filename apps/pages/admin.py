@@ -10,6 +10,7 @@ from .models import (
     PageSectionItem,
     SECTION_CHOICES_BY_PAGE_TYPE,
 )
+from .revalidation import revalidate_page, revalidate_page_section
 
 
 # # PAGE SECTION FORM
@@ -230,6 +231,19 @@ class PageAdmin(admin.ModelAdmin):
 
     public_path_preview.short_description = "URL"
 
+    def save_model(self, request, obj, form, change):
+        old_path = None
+        if change and obj.pk:
+            previous = Page.objects.filter(pk=obj.pk).first()
+            old_path = previous.get_public_path() if previous else None
+
+        super().save_model(request, obj, form, change)
+        revalidate_page(
+            obj,
+            reason="Page saved in Django admin",
+            old_path=old_path,
+        )
+
     def has_delete_permission(self, request, obj=None):
         has_permission = super().has_delete_permission(request, obj)
 
@@ -250,7 +264,9 @@ class PageAdmin(admin.ModelAdmin):
             )
             return
 
+        page = obj
         super().delete_model(request, obj)
+        revalidate_page(page, reason="Page deleted in Django admin")
 
     def delete_queryset(self, request, queryset):
         protected_pages = queryset.exclude(page_type="custom")
@@ -482,6 +498,15 @@ class PageSectionAdmin(admin.ModelAdmin):
 
     items_count.short_description = "Položky"
 
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        revalidate_page_section(obj, reason="PageSection saved in Django admin")
+
+    def delete_model(self, request, obj):
+        section = obj
+        super().delete_model(request, obj)
+        revalidate_page_section(section, reason="PageSection deleted in Django admin")
+
 
 # # PAGE SECTION ITEM ADMIN
 
@@ -558,5 +583,20 @@ class PageSectionItemAdmin(admin.ModelAdmin):
             return obj.file.name
 
         return "-"
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        revalidate_page_section(
+            obj.section,
+            reason="PageSectionItem saved in Django admin",
+        )
+
+    def delete_model(self, request, obj):
+        section = obj.section
+        super().delete_model(request, obj)
+        revalidate_page_section(
+            section,
+            reason="PageSectionItem deleted in Django admin",
+        )
 
     item_preview.short_description = "URL / súbor"

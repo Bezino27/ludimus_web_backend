@@ -6,6 +6,7 @@ from rest_framework.response import Response
 
 from apps.clubs.models import Club, ClubMembership
 from apps.common.permissions import EDITOR_ROLES
+from apps.common.revalidation import schedule_revalidation
 
 from .admin_serializers import (
     AdminCategoryLinkSerializer,
@@ -22,6 +23,12 @@ from .models import (
     TrainingLocation,
 )
 from .utils import recalculate_categories_for_club
+from .revalidation import (
+    get_category_child_revalidation_paths,
+    get_category_revalidation_paths,
+    get_club_season_revalidation_paths,
+    get_training_location_revalidation_paths,
+)
 
 
 def get_editor_club_ids(user):
@@ -82,13 +89,30 @@ class AdminCategoryViewSet(ClubScopedWriteMixin, viewsets.ModelViewSet):
         if not club:
             raise ValidationError({"club": "Klub je povinný."})
         self.ensure_club_allowed(club.id)
-        serializer.save()
+        category = serializer.save()
+        schedule_revalidation(
+            get_category_revalidation_paths(category),
+            reason="Category created via admin API",
+            club_slug=category.club.slug,
+        )
 
     def perform_update(self, serializer):
         instance = self.get_object()
+        old_slug = instance.slug
         club = serializer.validated_data.get("club", instance.club)
         self.ensure_club_allowed(club.id)
-        serializer.save()
+        category = serializer.save()
+        schedule_revalidation(
+            get_category_revalidation_paths(category, old_slug=old_slug),
+            reason="Category updated via admin API",
+            club_slug=category.club.slug,
+        )
+
+    def perform_destroy(self, instance):
+        paths = get_category_revalidation_paths(instance)
+        club_slug = instance.club.slug
+        instance.delete()
+        schedule_revalidation(paths, reason="Category deleted via admin API", club_slug=club_slug)
 
     @action(detail=False, methods=["get"], url_path="season-options")
     def season_options(self, request):
@@ -129,13 +153,30 @@ class AdminTrainingLocationViewSet(ClubScopedWriteMixin, viewsets.ModelViewSet):
         if not club:
             raise ValidationError({"club": "Klub je povinný."})
         self.ensure_club_allowed(club.id)
-        serializer.save()
+        location = serializer.save()
+        schedule_revalidation(
+            get_training_location_revalidation_paths(location),
+            reason="TrainingLocation created via admin API",
+            club_slug=location.club.slug,
+        )
 
     def perform_update(self, serializer):
         instance = self.get_object()
         club = serializer.validated_data.get("club", instance.club)
         self.ensure_club_allowed(club.id)
-        serializer.save()
+        old_paths = get_training_location_revalidation_paths(instance)
+        location = serializer.save()
+        schedule_revalidation(
+            [*old_paths, *get_training_location_revalidation_paths(location)],
+            reason="TrainingLocation updated via admin API",
+            club_slug=location.club.slug,
+        )
+
+    def perform_destroy(self, instance):
+        paths = get_training_location_revalidation_paths(instance)
+        club_slug = instance.club.slug
+        instance.delete()
+        schedule_revalidation(paths, reason="TrainingLocation deleted via admin API", club_slug=club_slug)
 
 
 class AdminCategoryTrainingViewSet(ClubScopedWriteMixin, viewsets.ModelViewSet):
@@ -159,13 +200,36 @@ class AdminCategoryTrainingViewSet(ClubScopedWriteMixin, viewsets.ModelViewSet):
         if not category:
             raise ValidationError({"category": "Kategória je povinná."})
         self.ensure_club_allowed(category.club_id)
-        serializer.save()
+        training = serializer.save()
+        schedule_revalidation(
+            get_category_child_revalidation_paths(training.category),
+            reason="CategoryTraining created via admin API",
+            club_slug=training.category.club.slug,
+        )
 
     def perform_update(self, serializer):
         instance = self.get_object()
         category = serializer.validated_data.get("category", instance.category)
         self.ensure_club_allowed(category.club_id)
-        serializer.save()
+        old_category = instance.category
+        training = serializer.save()
+        schedule_revalidation(
+            [
+                *get_category_child_revalidation_paths(old_category),
+                *get_category_child_revalidation_paths(training.category),
+            ],
+            reason="CategoryTraining updated via admin API",
+            club_slug=training.category.club.slug,
+        )
+
+    def perform_destroy(self, instance):
+        category = instance.category
+        instance.delete()
+        schedule_revalidation(
+            get_category_child_revalidation_paths(category),
+            reason="CategoryTraining deleted via admin API",
+            club_slug=category.club.slug,
+        )
 
 
 class AdminCategoryLinkViewSet(ClubScopedWriteMixin, viewsets.ModelViewSet):
@@ -189,13 +253,36 @@ class AdminCategoryLinkViewSet(ClubScopedWriteMixin, viewsets.ModelViewSet):
         if not category:
             raise ValidationError({"category": "Kategória je povinná."})
         self.ensure_club_allowed(category.club_id)
-        serializer.save()
+        link = serializer.save()
+        schedule_revalidation(
+            get_category_child_revalidation_paths(link.category),
+            reason="CategoryLink created via admin API",
+            club_slug=link.category.club.slug,
+        )
 
     def perform_update(self, serializer):
         instance = self.get_object()
         category = serializer.validated_data.get("category", instance.category)
         self.ensure_club_allowed(category.club_id)
-        serializer.save()
+        old_category = instance.category
+        link = serializer.save()
+        schedule_revalidation(
+            [
+                *get_category_child_revalidation_paths(old_category),
+                *get_category_child_revalidation_paths(link.category),
+            ],
+            reason="CategoryLink updated via admin API",
+            club_slug=link.category.club.slug,
+        )
+
+    def perform_destroy(self, instance):
+        category = instance.category
+        instance.delete()
+        schedule_revalidation(
+            get_category_child_revalidation_paths(category),
+            reason="CategoryLink deleted via admin API",
+            club_slug=category.club.slug,
+        )
 
 
 class AdminClubSeasonViewSet(ClubScopedWriteMixin, viewsets.ModelViewSet):
@@ -217,7 +304,12 @@ class AdminClubSeasonViewSet(ClubScopedWriteMixin, viewsets.ModelViewSet):
         if not club:
             raise ValidationError({"club": "Klub je povinný."})
         self.ensure_club_allowed(club.id)
-        serializer.save()
+        club_season = serializer.save()
+        schedule_revalidation(
+            get_club_season_revalidation_paths(club_season),
+            reason="ClubSeason created via admin API",
+            club_slug=club_season.club.slug,
+        )
 
     def perform_update(self, serializer):
         instance = self.get_object()
@@ -226,6 +318,17 @@ class AdminClubSeasonViewSet(ClubScopedWriteMixin, viewsets.ModelViewSet):
         updated_instance = serializer.save()
         if recalculate_categories and old_season != updated_instance.season:
             recalculate_categories_for_club(updated_instance.club, updated_instance.season)
+        schedule_revalidation(
+            get_club_season_revalidation_paths(updated_instance),
+            reason="ClubSeason updated via admin API",
+            club_slug=updated_instance.club.slug,
+        )
+
+    def perform_destroy(self, instance):
+        paths = get_club_season_revalidation_paths(instance)
+        club_slug = instance.club.slug
+        instance.delete()
+        schedule_revalidation(paths, reason="ClubSeason deleted via admin API", club_slug=club_slug)
 
     @action(detail=False, methods=["get", "patch"], url_path="current")
     def current(self, request):
@@ -249,5 +352,11 @@ class AdminClubSeasonViewSet(ClubScopedWriteMixin, viewsets.ModelViewSet):
 
         if recalculate_categories and old_season != updated_instance.season:
             recalculate_categories_for_club(updated_instance.club, updated_instance.season)
+
+        schedule_revalidation(
+            get_club_season_revalidation_paths(updated_instance),
+            reason="Current ClubSeason updated via admin API",
+            club_slug=updated_instance.club.slug,
+        )
 
         return Response(self.get_serializer(updated_instance).data, status=status.HTTP_200_OK)

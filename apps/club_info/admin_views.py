@@ -6,7 +6,7 @@ from rest_framework.response import Response
 
 from apps.clubs.models import ClubMembership
 from apps.common.permissions import EDITOR_ROLES, user_has_club_role
-from apps.common.revalidation import revalidate_paths
+from apps.common.revalidation import schedule_revalidation
 
 from .models import ContactInfo, ClubDocument, ClubLink
 from .admin_serializers import (
@@ -14,6 +14,7 @@ from .admin_serializers import (
     AdminClubDocumentSerializer,
     AdminClubLinkSerializer,
 )
+from .revalidation import get_club_link_revalidation_paths, get_contact_revalidation_paths
 
 
 def get_editor_membership(user):
@@ -51,11 +52,13 @@ def get_allowed_club_ids(user):
 
 
 def revalidate_contact(club_slug, reason):
-    revalidate_paths(["/kontakt"], reason=reason, club_slug=club_slug)
+    schedule_revalidation(get_contact_revalidation_paths(), reason=reason, club_slug=club_slug)
 
 
-def revalidate_links(club_slug, reason):
-    revalidate_paths(["/", "/kontakt", "/o-klube"], reason=reason, club_slug=club_slug)
+def revalidate_links(club, reason):
+    schedule_revalidation(
+        get_club_link_revalidation_paths(club), reason=reason, club_slug=club.slug
+    )
 
 
 @api_view(["GET"])
@@ -203,7 +206,7 @@ class AdminClubLinkViewSet(viewsets.ModelViewSet):
             raise PermissionError("Nemáš oprávnenie spravovať klubové odkazy.")
 
         serializer.save(club=club)
-        revalidate_links(club.slug, reason="ClubLink created in admin API")
+        revalidate_links(club, reason="ClubLink created in admin API")
 
     def perform_update(self, serializer):
         obj = self.get_object()
@@ -212,13 +215,13 @@ class AdminClubLinkViewSet(viewsets.ModelViewSet):
             raise PermissionError("Nemáš oprávnenie upravovať tento odkaz.")
 
         serializer.save()
-        revalidate_links(obj.club.slug, reason="ClubLink updated in admin API")
+        revalidate_links(obj.club, reason="ClubLink updated in admin API")
 
     def perform_destroy(self, instance):
-        club_slug = instance.club.slug
+        club = instance.club
 
         if not user_has_club_role(self.request.user, instance.club, EDITOR_ROLES):
             raise PermissionError("Nemáš oprávnenie zmazať tento odkaz.")
 
         instance.delete()
-        revalidate_links(club_slug, reason="ClubLink deleted in admin API")
+        revalidate_links(club, reason="ClubLink deleted in admin API")

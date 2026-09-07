@@ -1,10 +1,15 @@
+from unittest.mock import patch
+
+from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory
 
 from apps.clubs.models import Club, ClubMembership
 from apps.pages.admin_serializers import AdminPageSerializer
+from apps.pages.admin import PageAdmin
 from apps.pages.models import Page
+from apps.pages.revalidation import get_page_revalidation_paths
 from apps.pages.serializers import PageSerializer
 from apps.teams.models import Category
 
@@ -77,3 +82,25 @@ class PageTeamCategoryTests(TestCase):
         self.assertEqual(data["team_category"]["id"], self.category.id)
         self.assertEqual(data["team_category"]["slug"], "pripravka")
         self.assertEqual(data["team_category"]["name"], "Prípravka")
+
+    def test_page_paths_include_old_new_slug_and_sitemap(self):
+        page = Page.objects.create(
+            club=self.club, title="Nová", slug="nova", page_type="custom"
+        )
+        self.assertEqual(
+            get_page_revalidation_paths(page, old_path="/stranka/stara"),
+            ["/stranka/nova", "/stranka/stara", "/sitemap.xml"],
+        )
+
+    @patch("apps.pages.admin.revalidate_page")
+    def test_page_django_admin_schedules_revalidation(self, revalidate_page):
+        page = Page.objects.create(
+            club=self.club, title="Stránka", slug="stranka", page_type="custom"
+        )
+        page.slug = "nova-stranka"
+        PageAdmin(Page, admin.site).save_model(None, page, None, True)
+        revalidate_page.assert_called_once_with(
+            page,
+            reason="Page saved in Django admin",
+            old_path="/stranka/stranka",
+        )

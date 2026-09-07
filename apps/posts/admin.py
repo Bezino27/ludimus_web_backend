@@ -1,13 +1,37 @@
 from django.contrib import admin
 
+from apps.common.revalidation import schedule_revalidation
+
 from .models import PostCategory, Post
-from .revalidation import revalidate_post_paths
+from .revalidation import (
+    get_post_category_revalidation_paths,
+    revalidate_post_category_paths,
+    revalidate_post_paths,
+)
 
 
 @admin.register(PostCategory)
 class PostCategoryAdmin(admin.ModelAdmin):
     list_display = ("name", "club")
     prepopulated_fields = {"slug": ("name",)}
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        revalidate_post_category_paths(
+            obj,
+            reason="PostCategory saved in Django admin",
+        )
+
+    def delete_model(self, request, obj):
+        category = obj
+        paths = get_post_category_revalidation_paths(category)
+        club_slug = category.club.slug
+        super().delete_model(request, obj)
+        schedule_revalidation(
+            paths,
+            reason="PostCategory deleted in Django admin",
+            club_slug=club_slug,
+        )
 
 
 @admin.register(Post)

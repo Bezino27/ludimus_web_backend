@@ -1,18 +1,21 @@
 from django.contrib import admin
 
-from apps.common.revalidation import revalidate_paths
+from apps.common.revalidation import schedule_revalidation
 
 from .models import ContactInfo, ClubDocument, ClubLink
+from .revalidation import get_club_link_revalidation_paths, get_contact_revalidation_paths
 
 
 def revalidate_contact_paths(obj, reason):
     club_slug = getattr(getattr(obj, "club", None), "slug", "")
-    revalidate_paths(["/kontakt"], reason=reason, club_slug=club_slug)
+    schedule_revalidation(get_contact_revalidation_paths(obj), reason=reason, club_slug=club_slug)
 
 
 def revalidate_club_link_paths(obj, reason):
     club_slug = getattr(getattr(obj, "club", None), "slug", "")
-    revalidate_paths(["/", "/kontakt", "/o-klube"], reason=reason, club_slug=club_slug)
+    schedule_revalidation(
+        get_club_link_revalidation_paths(obj.club), reason=reason, club_slug=club_slug
+    )
 
 
 @admin.register(ContactInfo)

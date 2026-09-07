@@ -1,6 +1,6 @@
 import logging
 
-from apps.common.revalidation import revalidate_paths
+from apps.common.revalidation import schedule_revalidation
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +21,19 @@ def get_page_revalidation_path(page) -> str | None:
     return None
 
 
-def revalidate_page(page, reason: str = "") -> bool:
-    path = get_page_revalidation_path(page)
+def get_page_revalidation_paths(page, old_path: str | None = None) -> list[str]:
+    paths = [get_page_revalidation_path(page), old_path, "/sitemap.xml"]
+    return [path for path in paths if path]
 
-    if not path:
+
+def revalidate_page(page, reason: str = "", old_path: str | None = None) -> bool:
+    paths = get_page_revalidation_paths(page, old_path=old_path)
+
+    if not paths:
         return False
 
     club_slug = getattr(getattr(page, "club", None), "slug", "")
-    return revalidate_paths([path], reason=reason, club_slug=club_slug)
+    return schedule_revalidation(paths, reason=reason, club_slug=club_slug)
 
 
 def revalidate_page_section(section, reason: str = "") -> bool:

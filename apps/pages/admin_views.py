@@ -54,20 +54,21 @@ class AdminPageViewSet(viewsets.ModelViewSet):
         if not user_has_club_role(self.request.user, club, EDITOR_ROLES):
             raise PermissionDenied("Nemáš oprávnenie vytvárať stránky pre tento klub.")
         page = serializer.save()
-        defaults_created = create_default_page_sections(page)
+        create_default_page_sections(page)
         revalidate_page(page, reason="Page created via admin API")
-        if defaults_created:
-            revalidate_page(page, reason="Default PageSections created via admin API")
 
     def perform_update(self, serializer):
         instance = self.get_object()
+        old_path = instance.get_public_path()
         if not user_has_club_role(self.request.user, instance.club, EDITOR_ROLES):
             raise PermissionDenied("Nemáš oprávnenie upravovať túto stránku.")
         page = serializer.save()
-        defaults_created = create_default_page_sections(page)
-        revalidate_page(page, reason="Page updated via admin API")
-        if defaults_created:
-            revalidate_page(page, reason="Default PageSections created via admin API")
+        create_default_page_sections(page)
+        revalidate_page(
+            page,
+            reason="Page updated via admin API",
+            old_path=old_path,
+        )
 
     def perform_destroy(self, instance):
         if not user_has_club_role(self.request.user, instance.club, EDITOR_ROLES):

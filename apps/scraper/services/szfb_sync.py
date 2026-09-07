@@ -101,7 +101,6 @@ def sync_competition_from_home_url(home_url: str, competition_id: int | None = N
         competition.source_url = data["source_url"]
         competition.standings_url = data["standings_url"]
         competition.results_url = data["results_url"]
-        competition.last_synced_at = timezone.now()
         competition.save(
             update_fields=[
                 "szfb_competition_id",
@@ -110,7 +109,6 @@ def sync_competition_from_home_url(home_url: str, competition_id: int | None = N
                 "source_url",
                 "standings_url",
                 "results_url",
-                "last_synced_at",
             ]
         )
     else:
@@ -128,7 +126,6 @@ def sync_competition_from_home_url(home_url: str, competition_id: int | None = N
             competition.source_url = data["source_url"]
             competition.standings_url = data["standings_url"]
             competition.results_url = data["results_url"]
-            competition.last_synced_at = timezone.now()
             competition.save(
                 update_fields=[
                     "szfb_competition_id",
@@ -137,7 +134,6 @@ def sync_competition_from_home_url(home_url: str, competition_id: int | None = N
                     "source_url",
                     "standings_url",
                     "results_url",
-                    "last_synced_at",
                 ]
             )
         else:
@@ -149,7 +145,6 @@ def sync_competition_from_home_url(home_url: str, competition_id: int | None = N
                     "source_url": data["source_url"],
                     "standings_url": data["standings_url"],
                     "results_url": data["results_url"],
-                    "last_synced_at": timezone.now(),
                 },
             )
 
