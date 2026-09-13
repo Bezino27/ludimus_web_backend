@@ -9,10 +9,12 @@ from apps.scraper.views import (
     AdminSzfbPlayerStatUpdateView,
     AdminSzfbTeamWatchListView,
     AdminSzfbWatchMatchesView,
+    AdminSzfbWatchGoaliesView,
     AdminSzfbWatchPlayersView,
     AdminSzfbWatchSettingsCreateView,
     AdminSzfbWatchSettingsUpdateView,
-    AdminSzfbAutoSyncConfigView,
+    AdminSzfbWatchAutoSyncConfigView,
+    AdminSzfbWatchDetailView,
 )
 
 urlpatterns = [
@@ -57,6 +59,11 @@ urlpatterns = [
         name="admin-szfb-watch-players",
     ),
     path(
+        "watches/<int:watch_id>/goalies/",
+        AdminSzfbWatchGoaliesView.as_view(),
+        name="admin-szfb-watch-goalies",
+    ),
+    path(
         "players/<int:player_id>/",
         AdminSzfbPlayerStatUpdateView.as_view(),
         name="admin-szfb-player-update",
@@ -72,8 +79,13 @@ urlpatterns = [
         name="admin-szfb-watch-settings-update",
     ),
     path(
-    "auto-sync/",
-    AdminSzfbAutoSyncConfigView.as_view(),
-    name="admin-szfb-auto-sync-config",
+        "watches/<int:watch_id>/auto-sync/",
+        AdminSzfbWatchAutoSyncConfigView.as_view(),
+        name="admin-szfb-watch-auto-sync-config",
+    ),
+    path(
+        "watches/<int:watch_id>/",
+        AdminSzfbWatchDetailView.as_view(),
+        name="admin-szfb-watch-detail",
     ),
 ]

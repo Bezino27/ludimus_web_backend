@@ -3,14 +3,10 @@ import logging
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.scraper.models import (
-    SzfbAutoSyncConfig,
-    SzfbCompetition,
-)
+from apps.scraper.models import SzfbWatchAutoSyncConfig
 from apps.scraper.services.szfb_sync_runner import (
-    can_start_competition_sync,
     expire_stale_running_competition_syncs,
-    run_competition_sync,
+    run_watch_sync,
 )
 
 
@@ -18,208 +14,70 @@ logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = "Spustí automatické SZFB synchronizácie, ktoré sú práve naplánované."
+    help = "Spustí automatické SZFB synchronizácie tímov, ktoré sú naplánované."
 
     def add_arguments(self, parser):
-        parser.add_argument(
-            "--club",
-            type=str,
-            default="",
-            help="Voliteľný slug klubu, napríklad atu-kosice.",
-        )
-        parser.add_argument(
-            "--force",
-            action="store_true",
-            help="Spustí sync bez kontroly next_run_at, ale stále rešpektuje rate-limit.",
-        )
-        parser.add_argument(
-            "--dry-run",
-            action="store_true",
-            help="Iba vypíše, čo by sa spustilo, ale nič nespustí.",
-        )
+        parser.add_argument("--club", type=str, default="")
+        parser.add_argument("--force", action="store_true")
+        parser.add_argument("--dry-run", action="store_true")
 
     def handle(self, *args, **options):
         now = timezone.now()
-        club_slug = options["club"]
-        force = options["force"]
-        dry_run = options["dry_run"]
-
         expire_stale_running_competition_syncs()
-
         configs = (
-            SzfbAutoSyncConfig.objects
-            .select_related("club")
-            .filter(is_enabled=True)
-            .order_by("club__name")
+            SzfbWatchAutoSyncConfig.objects.select_related(
+                "watch", "watch__club", "watch__competition"
+            )
+            .filter(is_enabled=True, watch__is_active=True)
+            .order_by("watch__club__name", "watch__label")
         )
-
-        if club_slug:
-            configs = configs.filter(club__slug=club_slug)
+        if options["club"]:
+            configs = configs.filter(watch__club__slug=options["club"])
 
         if not configs.exists():
-            self.stdout.write(
-                self.style.WARNING("Nie je zapnutá žiadna SZFB automatika.")
-            )
+            self.stdout.write(self.style.WARNING("Nie je zapnutá žiadna SZFB automatika."))
             return
 
         for config in configs:
             self.process_config(
-                config=config,
-                now=now,
-                force=force,
-                dry_run=dry_run,
+                config, now, force=options["force"], dry_run=options["dry_run"]
             )
 
     def process_config(self, config, now, force=False, dry_run=False):
-        club = config.club
-
+        watch = config.watch
+        label = f"{watch.club} / {watch.label}"
         if not config.next_run_at:
             config.refresh_next_run_at(from_datetime=now)
-            self.stdout.write(
-                f"{club}: doplnený najbližší sync na {config.next_run_at}."
-            )
 
-        is_due = config.is_due(now)
-
-        if not force and not is_due:
+        if not force and not config.is_due(now):
             self.stdout.write(
-                f"{club}: ešte nie je čas. Najbližší sync: {config.next_run_at}"
+                f"{label}: ešte nie je čas. Najbližší sync: {config.next_run_at}"
             )
             return
-
-        competitions = (
-            SzfbCompetition.objects
-            .filter(
-                watched_teams__club=club,
-                watched_teams__is_active=True,
-            )
-            .distinct()
-            .order_by("name")
-        )
-
-        total_count = competitions.count()
-
-        if total_count == 0:
-            message = "Klub nemá žiadne aktívne SZFB súťaže na synchronizáciu."
-            self.finish_config(
-                config=config,
-                status=SzfbAutoSyncConfig.STATUS_SKIPPED,
-                message=message,
-                now=now,
-                dry_run=dry_run,
-            )
-            self.stdout.write(self.style.WARNING(f"{club}: {message}"))
-            return
-
-        self.stdout.write(
-            self.style.NOTICE(
-                f"{club}: nájdených {total_count} súťaží na kontrolu."
-            )
-        )
 
         if dry_run:
-            for competition in competitions:
-                self.stdout.write(
-                    f"[DRY RUN] {club}: sync súťaže {competition.id} "
-                    f"{competition.name}"
-                )
-
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f"[DRY RUN] {club}: hotovo, nič nebolo spustené."
-                )
-            )
+            self.stdout.write(self.style.SUCCESS(f"[DRY RUN] {label}: spustil by sa sync."))
             return
 
-        started_count = 0
-        skipped_count = 0
-        error_count = 0
-        messages = []
-
-        for competition in competitions:
-            can_start, reason, next_allowed_at = can_start_competition_sync(
-                competition,
-            )
-
-            if not can_start:
-                skipped_count += 1
-                message = (
-                    f"Preskočené: {competition.name} "
-                    f"reason={reason} next_allowed_at={next_allowed_at}"
-                )
-                messages.append(message)
-                self.stdout.write(self.style.WARNING(message))
-                continue
-
-            started_count += 1
-
-            SzfbCompetition.objects.filter(id=competition.id).update(
-                sync_status=SzfbCompetition.SYNC_STATUS_RUNNING,
-                sync_started_at=timezone.now(),
-                sync_last_attempt_at=timezone.now(),
-                sync_finished_at=None,
-                sync_error="",
-            )
-
-            self.stdout.write(
-                self.style.NOTICE(
-                    f"Spúšťam SZFB sync: {competition.id} {competition.name}"
-                )
-            )
-
-            run_competition_sync(competition.id)
-
-            competition.refresh_from_db()
-
-            if competition.sync_status == SzfbCompetition.SYNC_STATUS_ERROR:
-                error_count += 1
-                messages.append(
-                    f"Chyba: {competition.name}: {competition.sync_error}"
-                )
-            else:
-                messages.append(f"Hotovo: {competition.name}")
-
-        if error_count:
-            status = SzfbAutoSyncConfig.STATUS_ERROR
-        elif started_count:
-            status = SzfbAutoSyncConfig.STATUS_SUCCESS
+        try:
+            run_watch_sync(watch.id)
+        except Exception as exc:
+            logger.exception("SZFB watch auto sync failed watch_id=%s", watch.id)
+            status = SzfbWatchAutoSyncConfig.STATUS_ERROR
+            message = f"{label}: {str(exc)[:4500]}"
+            output = self.style.ERROR
         else:
-            status = SzfbAutoSyncConfig.STATUS_SKIPPED
-
-        final_message = (
-            f"Spustené: {started_count}, "
-            f"preskočené: {skipped_count}, "
-            f"chyby: {error_count}. "
-            + " | ".join(messages[:10])
-        )
-
-        self.finish_config(
-            config=config,
-            status=status,
-            message=final_message,
-            now=now,
-            dry_run=False,
-        )
-
-        if status == SzfbAutoSyncConfig.STATUS_ERROR:
-            self.stdout.write(self.style.ERROR(f"{club}: {final_message}"))
-        else:
-            self.stdout.write(self.style.SUCCESS(f"{club}: {final_message}"))
-
-    def finish_config(self, config, status, message, now, dry_run=False):
-        if dry_run:
-            return
+            status = SzfbWatchAutoSyncConfig.STATUS_SUCCESS
+            message = f"{label}: synchronizácia bola úspešne dokončená."
+            output = self.style.SUCCESS
 
         config.last_run_at = now
         config.last_status = status
-        config.last_message = message[:5000]
+        config.last_message = message
         config.next_run_at = config.calculate_next_run_at(from_datetime=timezone.now())
         config.save(
             update_fields=[
-                "last_run_at",
-                "last_status",
-                "last_message",
-                "next_run_at",
-                "updated_at",
+                "last_run_at", "last_status", "last_message", "next_run_at", "updated_at"
             ]
         )
+        self.stdout.write(output(message))

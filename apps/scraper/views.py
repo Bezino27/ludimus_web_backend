@@ -14,9 +14,10 @@ from rest_framework.views import APIView
 from apps.scraper.models import (
     ClubPlayer,
     SzfbCompetition,
+    SzfbGoalieStat,
     SzfbMatch,
     SzfbPlayerStat,
-    SzfbAutoSyncConfig,
+    SzfbWatchAutoSyncConfig,
     SzfbStandingRow,
     SzfbTeamWatch,
 )
@@ -24,9 +25,10 @@ from apps.scraper.serializers import (
     AdminClubPlayerSerializer,
     AdminClubPlayerUpdateSerializer,
     AdminSzfbCompetitionSerializer,
+    AdminSzfbGoalieStatSerializer,
     AdminSzfbMatchSerializer,
     AdminSzfbPlayerStatSerializer,
-    AdminSzfbAutoSyncConfigSerializer,
+    AdminSzfbWatchAutoSyncConfigSerializer,
     AdminSzfbPlayerStatUpdateSerializer,
     AdminSzfbStandingRowSerializer,
     AdminSzfbWatchSettingsSerializer,
@@ -49,6 +51,23 @@ from apps.scraper.revalidation import (
     get_player_stat_revalidation_paths,
     get_watch_revalidation_paths,
 )
+from apps.clubs.models import ClubMembership
+from apps.common.permissions import EDITOR_ROLES
+
+
+def get_editor_watch_or_404(request, watch_id):
+    club_ids = ClubMembership.objects.filter(
+        user=request.user,
+        is_active=True,
+        role__in=EDITOR_ROLES,
+    ).values_list("club_id", flat=True)
+    queryset = SzfbTeamWatch.objects.select_related("competition", "club").filter(
+        club_id__in=club_ids
+    )
+    club_slug = request.data.get("club_slug") or request.query_params.get("club", "")
+    if club_slug:
+        queryset = queryset.filter(club__slug=club_slug)
+    return get_object_or_404(queryset, id=watch_id)
 
 
 def get_upcoming_matches(watch):
@@ -387,6 +406,7 @@ class AdminSzfbCompetitionListView(ListAPIView):
                     distinct=True,
                 ),
                 player_stats_count=Count("player_stats", distinct=True),
+                goalie_stats_count=Count("goalie_stats", distinct=True),
             )
             .order_by("label", "team_name")
         )
@@ -490,6 +510,32 @@ class AdminSzfbWatchPlayersView(ListAPIView):
         return (
             SzfbPlayerStat.objects
             .select_related(
+                "club_player",
+                "watched_team",
+                "watched_team__club",
+                "watched_team__competition",
+            )
+            .filter(watched_team_id=watch_id)
+            .order_by("club_player__display_order", "rank", "player_name", "id")
+        )
+
+
+class AdminSzfbWatchGoaliesView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AdminSzfbGoalieStatSerializer
+    pagination_class = AdminSzfbPlayerStatsPagination
+
+    def get_queryset(self):
+        watch_id = self.kwargs["watch_id"]
+        club_slug = self.request.query_params.get("club")
+        watch_queryset = SzfbTeamWatch.objects.all()
+
+        if club_slug:
+            watch_queryset = watch_queryset.filter(club__slug=club_slug)
+
+        get_object_or_404(watch_queryset, id=watch_id)
+        return (
+            SzfbGoalieStat.objects.select_related(
                 "club_player",
                 "watched_team",
                 "watched_team__club",
@@ -625,6 +671,10 @@ class AdminSzfbWatchSettingsCreateView(APIView):
         serializer = AdminSzfbWatchSettingsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         watch = serializer.save()
+        if not watch.is_active:
+            SzfbWatchAutoSyncConfig.objects.filter(watch=watch).update(
+                is_enabled=False
+            )
         schedule_revalidation(
             get_watch_revalidation_paths(watch),
             reason="SZFB team watch created via admin API",
@@ -663,6 +713,10 @@ class AdminSzfbWatchSettingsUpdateView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         watch = serializer.save()
+        if not watch.is_active:
+            SzfbWatchAutoSyncConfig.objects.filter(watch=watch).update(
+                is_enabled=False
+            )
         schedule_revalidation(
             [*old_paths, *get_watch_revalidation_paths(watch)],
             reason="SZFB team watch updated via admin API",
@@ -670,56 +724,46 @@ class AdminSzfbWatchSettingsUpdateView(APIView):
         )
 
         return Response(AdminSzfbWatchSettingsSerializer(watch).data)
-class AdminSzfbAutoSyncConfigView(APIView):
+class AdminSzfbWatchDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get_config(self, club_slug):
-        if not club_slug:
-            return None
+    def delete(self, request, watch_id):
+        watch = get_editor_watch_or_404(request, watch_id)
+        club_slug = watch.club.slug
+        paths = get_watch_revalidation_paths(watch)
+        watch.delete()
+        schedule_revalidation(
+            paths,
+            reason="SZFB team watch deleted via admin API",
+            club_slug=club_slug,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
-        from apps.clubs.models import Club
 
-        club = get_object_or_404(Club, slug=club_slug)
+class AdminSzfbWatchAutoSyncConfigView(APIView):
+    permission_classes = [IsAuthenticated]
 
-        config, created = SzfbAutoSyncConfig.objects.get_or_create(
-            club=club,
+    def get_config(self, request, watch_id):
+        watch = get_editor_watch_or_404(request, watch_id)
+        config, created = SzfbWatchAutoSyncConfig.objects.get_or_create(
+            watch=watch,
             defaults={
                 "is_enabled": False,
-                "frequency": SzfbAutoSyncConfig.FREQUENCY_WEEKLY,
-                "weekday": SzfbAutoSyncConfig.WEEKDAY_MONDAY,
+                "frequency": SzfbWatchAutoSyncConfig.FREQUENCY_WEEKLY,
+                "weekday": SzfbWatchAutoSyncConfig.WEEKDAY_MONDAY,
             },
         )
-
         if created or not config.next_run_at:
             config.refresh_next_run_at()
-
         return config
 
-    def get(self, request):
-        club_slug = request.query_params.get("club", "")
-        config = self.get_config(club_slug)
+    def get(self, request, watch_id):
+        config = self.get_config(request, watch_id)
+        return Response(AdminSzfbWatchAutoSyncConfigSerializer(config).data)
 
-        if not config:
-            return Response(
-                {"detail": "Chýba club query parameter."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        return Response(
-            AdminSzfbAutoSyncConfigSerializer(config).data
-        )
-
-    def patch(self, request):
-        club_slug = request.data.get("club_slug") or request.query_params.get("club", "")
-        config = self.get_config(club_slug)
-
-        if not config:
-            return Response(
-                {"detail": "Chýba club_slug."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        serializer = AdminSzfbAutoSyncConfigSerializer(
+    def patch(self, request, watch_id):
+        config = self.get_config(request, watch_id)
+        serializer = AdminSzfbWatchAutoSyncConfigSerializer(
             config,
             data=request.data,
             partial=True,

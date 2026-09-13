@@ -6,9 +6,10 @@ from apps.clubs.models import Club
 from apps.scraper.models import (
     ClubPlayer,
     SzfbCompetition,
+    SzfbGoalieStat,
     SzfbMatch,
     SzfbMatchHistory,
-    SzfbAutoSyncConfig,
+    SzfbWatchAutoSyncConfig,
     SzfbPlayerStat,
     SzfbStandingRow,
     SzfbTeamWatch,
@@ -118,8 +119,9 @@ class PlayerProfileFieldsMixin(serializers.Serializer):
         if club_player and club_player.photo:
             return club_player.photo
 
-        if obj.photo:
-            return obj.photo
+        legacy_photo = getattr(obj, "photo", None)
+        if legacy_photo:
+            return legacy_photo
 
         return None
 
@@ -157,10 +159,10 @@ class PlayerProfileFieldsMixin(serializers.Serializer):
     def get_jersey_number(self, obj):
         club_player = self.get_club_player(obj)
 
-        if club_player:
+        if club_player and club_player.jersey_number is not None:
             return club_player.jersey_number
 
-        return obj.jersey_number
+        return getattr(obj, "jersey_number", None)
 
     def get_display_position(self, obj):
         club_player = self.get_club_player(obj)
@@ -168,7 +170,7 @@ class PlayerProfileFieldsMixin(serializers.Serializer):
         if club_player and club_player.position:
             return club_player.position
 
-        return obj.player_position
+        return getattr(obj, "player_position", "G")
 
     def get_height_cm(self, obj):
         club_player = self.get_club_player(obj)
@@ -192,7 +194,7 @@ class PlayerProfileFieldsMixin(serializers.Serializer):
         if club_player:
             return club_player.bio
 
-        return obj.bio
+        return getattr(obj, "bio", "")
 
     def get_is_active(self, obj):
         club_player = self.get_club_player(obj)
@@ -200,7 +202,7 @@ class PlayerProfileFieldsMixin(serializers.Serializer):
         if club_player:
             return club_player.is_active
 
-        return obj.is_active
+        return getattr(obj, "is_active", True)
 
     def get_is_featured(self, obj):
         club_player = self.get_club_player(obj)
@@ -208,7 +210,7 @@ class PlayerProfileFieldsMixin(serializers.Serializer):
         if club_player:
             return club_player.is_featured
 
-        return obj.is_featured
+        return getattr(obj, "is_featured", False)
 
     def get_display_order(self, obj):
         club_player = self.get_club_player(obj)
@@ -216,7 +218,7 @@ class PlayerProfileFieldsMixin(serializers.Serializer):
         if club_player:
             return club_player.display_order
 
-        return obj.display_order
+        return getattr(obj, "display_order", 0)
 
 
 class SzfbPlayerStatSerializer(PlayerProfileFieldsMixin, serializers.ModelSerializer):
@@ -225,6 +227,7 @@ class SzfbPlayerStatSerializer(PlayerProfileFieldsMixin, serializers.ModelSerial
         fields = [
             "id",
             "club_player_id",
+            "szfb_player_id",
             "rank",
             "player_name",
             "birth_year",
@@ -340,6 +343,7 @@ class AdminSzfbPlayerStatSerializer(PlayerProfileFieldsMixin, serializers.ModelS
         fields = [
             "id",
             "club_player_id",
+            "szfb_player_id",
             "rank",
             "player_name",
             "birth_year",
@@ -367,6 +371,44 @@ class AdminSzfbPlayerStatSerializer(PlayerProfileFieldsMixin, serializers.ModelS
         ]
 
 
+class AdminSzfbGoalieStatSerializer(
+    PlayerProfileFieldsMixin,
+    serializers.ModelSerializer,
+):
+    class Meta:
+        model = SzfbGoalieStat
+        fields = [
+            "id",
+            "club_player_id",
+            "szfb_player_id",
+            "rank",
+            "jersey_number",
+            "player_name",
+            "birth_year",
+            "games",
+            "wins",
+            "overtime_wins",
+            "losses",
+            "overtime_losses",
+            "shots_against",
+            "goals_against",
+            "goals_against_average",
+            "saves",
+            "save_percentage",
+            "minutes_played_seconds",
+            "shutouts",
+            "photo",
+            "photo_url",
+            "display_position",
+            "height_cm",
+            "weight_kg",
+            "bio",
+            "is_active",
+            "is_featured",
+            "display_order",
+        ]
+
+
 class AdminSzfbPlayerStatsOnlySerializer(serializers.ModelSerializer):
     player_name = serializers.SerializerMethodField()
 
@@ -377,6 +419,7 @@ class AdminSzfbPlayerStatsOnlySerializer(serializers.ModelSerializer):
         model = SzfbPlayerStat
         fields = [
             "id",
+            "szfb_player_id",
             "rank",
             "player_name",
             "birth_year",
@@ -832,6 +875,7 @@ class AdminSzfbTeamWatchSummarySerializer(serializers.ModelSerializer):
     finished_matches_count = serializers.SerializerMethodField()
     upcoming_matches_count = serializers.SerializerMethodField()
     player_stats_count = serializers.SerializerMethodField()
+    goalie_stats_count = serializers.SerializerMethodField()
 
     def get_matches_count(self, obj):
         return getattr(obj, "matches_count", 0)
@@ -844,6 +888,9 @@ class AdminSzfbTeamWatchSummarySerializer(serializers.ModelSerializer):
 
     def get_player_stats_count(self, obj):
         return getattr(obj, "player_stats_count", 0)
+
+    def get_goalie_stats_count(self, obj):
+        return getattr(obj, "goalie_stats_count", 0)
 
     class Meta:
         model = SzfbTeamWatch
@@ -860,6 +907,7 @@ class AdminSzfbTeamWatchSummarySerializer(serializers.ModelSerializer):
             "finished_matches_count",
             "upcoming_matches_count",
             "player_stats_count",
+            "goalie_stats_count",
         ]
 
 
@@ -1054,15 +1102,21 @@ class AdminSzfbWatchSettingsSerializer(serializers.Serializer):
         )
 
         return instance
-class AdminSzfbAutoSyncConfigSerializer(serializers.ModelSerializer):
-    club_slug = serializers.CharField(source="club.slug", read_only=True)
-    club_name = serializers.CharField(source="club.name", read_only=True)
+class AdminSzfbWatchAutoSyncConfigSerializer(serializers.ModelSerializer):
+    watch_id = serializers.IntegerField(source="watch.id", read_only=True)
+    watch_label = serializers.CharField(source="watch.label", read_only=True)
+    watch_is_active = serializers.BooleanField(source="watch.is_active", read_only=True)
+    club_slug = serializers.CharField(source="watch.club.slug", read_only=True)
+    club_name = serializers.CharField(source="watch.club.name", read_only=True)
     next_run_at_preview = serializers.SerializerMethodField()
 
     class Meta:
-        model = SzfbAutoSyncConfig
+        model = SzfbWatchAutoSyncConfig
         fields = [
             "id",
+            "watch_id",
+            "watch_label",
+            "watch_is_active",
             "club_slug",
             "club_name",
             "is_enabled",
@@ -1077,6 +1131,9 @@ class AdminSzfbAutoSyncConfigSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "watch_id",
+            "watch_label",
+            "watch_is_active",
             "club_slug",
             "club_name",
             "last_run_at",
@@ -1088,6 +1145,13 @@ class AdminSzfbAutoSyncConfigSerializer(serializers.ModelSerializer):
 
     def get_next_run_at_preview(self, obj):
         return obj.calculate_next_run_at()
+
+    def validate_is_enabled(self, value):
+        if value and not self.instance.watch.is_active:
+            raise serializers.ValidationError(
+                "Automatickú synchronizáciu nemožno zapnúť pre neaktívny tím."
+            )
+        return value
 
     def update(self, instance, validated_data):
         for field_name in [

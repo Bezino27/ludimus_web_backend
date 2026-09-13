@@ -153,7 +153,7 @@ class ClubPlayer(models.Model):
         return self.full_name
 
 
-class SzfbAutoSyncConfig(models.Model):
+class SzfbWatchAutoSyncConfig(models.Model):
     FREQUENCY_DAILY = "daily"
     FREQUENCY_WEEKLY = "weekly"
 
@@ -192,10 +192,10 @@ class SzfbAutoSyncConfig(models.Model):
         (STATUS_SKIPPED, "Preskočené"),
     ]
 
-    club = models.OneToOneField(
-        "clubs.Club",
+    watch = models.OneToOneField(
+        SzfbTeamWatch,
         on_delete=models.CASCADE,
-        related_name="szfb_auto_sync_config",
+        related_name="auto_sync_config",
     )
 
     is_enabled = models.BooleanField(default=False)
@@ -224,11 +224,11 @@ class SzfbAutoSyncConfig(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = "SZFB automatická synchronizácia"
-        verbose_name_plural = "SZFB automatické synchronizácie"
+        verbose_name = "SZFB automatická synchronizácia tímu"
+        verbose_name_plural = "SZFB automatické synchronizácie tímov"
 
     def __str__(self):
-        return f"{self.club} - SZFB auto sync"
+        return f"{self.watch} - SZFB auto sync"
 
     def calculate_next_run_at(self, from_datetime=None):
         current = timezone.localtime(from_datetime or timezone.now())
@@ -271,7 +271,7 @@ class SzfbAutoSyncConfig(models.Model):
         return self.next_run_at
 
     def is_due(self, now=None):
-        if not self.is_enabled:
+        if not self.is_enabled or not self.watch.is_active:
             return False
 
         current = now or timezone.now()
@@ -364,6 +364,7 @@ class SzfbPlayerStat(models.Model):
         blank=True,
         related_name="szfb_stats",
     )
+    szfb_player_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
 
     rank = models.PositiveIntegerField()
     player_name = models.CharField(max_length=255)
@@ -394,7 +395,66 @@ class SzfbPlayerStat(models.Model):
 
     class Meta:
         ordering = ["rank"]
-        unique_together = ("watched_team", "rank", "player_name")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["watched_team", "szfb_player_id"],
+                name="unique_szfb_player_stat_per_team",
+            )
+        ]
 
     def __str__(self):
         return f"{self.rank}. {self.player_name} - {self.points}b"
+
+
+class SzfbGoalieStat(models.Model):
+    watched_team = models.ForeignKey(
+        SzfbTeamWatch,
+        on_delete=models.CASCADE,
+        related_name="goalie_stats",
+    )
+    club_player = models.ForeignKey(
+        ClubPlayer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="szfb_goalie_stats",
+    )
+    szfb_player_id = models.PositiveIntegerField(db_index=True)
+
+    rank = models.PositiveIntegerField()
+    jersey_number = models.PositiveIntegerField(null=True, blank=True)
+    player_name = models.CharField(max_length=255)
+    birth_year = models.PositiveIntegerField(null=True, blank=True)
+
+    games = models.PositiveIntegerField(default=0)
+    wins = models.PositiveIntegerField(default=0)
+    overtime_wins = models.PositiveIntegerField(default=0)
+    losses = models.PositiveIntegerField(default=0)
+    overtime_losses = models.PositiveIntegerField(default=0)
+    shots_against = models.PositiveIntegerField(default=0)
+    goals_against = models.PositiveIntegerField(default=0)
+    goals_against_average = models.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        default=0,
+    )
+    saves = models.PositiveIntegerField(default=0)
+    save_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+    )
+    minutes_played_seconds = models.PositiveIntegerField(default=0)
+    shutouts = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["rank", "player_name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["watched_team", "szfb_player_id"],
+                name="unique_szfb_goalie_stat_per_team",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.player_name} - {self.save_percentage}%"

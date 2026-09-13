@@ -4,9 +4,10 @@ from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone
 
-from apps.scraper.models import SzfbCompetition
+from apps.scraper.models import SzfbCompetition, SzfbTeamWatch
 from apps.common.revalidation import schedule_revalidation
 from apps.scraper.revalidation import get_competition_revalidation_paths
+from apps.scraper.revalidation import get_watch_revalidation_paths
 from apps.scraper.services.szfb_sync import sync_competition_from_home_url
 
 
@@ -175,3 +176,26 @@ def run_competition_sync(competition_id: int):
             competition_id,
             error_text,
         )
+
+
+def run_watch_sync(watch_id: int):
+    watch = SzfbTeamWatch.objects.select_related("competition", "club").get(
+        id=watch_id
+    )
+    if not watch.is_active:
+        raise ValueError("Sledovaný tím je neaktívny.")
+    if not watch.competition.source_url:
+        raise ValueError("Súťaž nemá vyplnenú source_url.")
+
+    synced_competition = sync_competition_from_home_url(
+        watch.competition.source_url,
+        competition_id=watch.competition_id,
+        watch_ids=[watch.id],
+    )
+    watch.refresh_from_db()
+    schedule_revalidation(
+        get_watch_revalidation_paths(watch),
+        reason="SZFB watched team auto sync completed",
+        club_slug=watch.club.slug if watch.club else "",
+    )
+    return synced_competition

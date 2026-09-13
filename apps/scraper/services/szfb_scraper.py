@@ -178,6 +178,30 @@ def parse_decimal(value: str) -> Decimal:
         return Decimal("0")
 
 
+def parse_percentage(value: str) -> Decimal:
+    return parse_decimal(normalize_spaces(value).replace("%", ""))
+
+
+def parse_duration_seconds(value: str) -> int:
+    """Parse SZFB duration (normally MM:SS) without imposing a 24-hour limit."""
+    parts = normalize_spaces(value).split(":")
+
+    try:
+        numbers = [int(part) for part in parts]
+    except (TypeError, ValueError):
+        return 0
+
+    if len(numbers) == 2:
+        minutes, seconds = numbers
+        return max(0, minutes * 60 + seconds)
+
+    if len(numbers) == 3:
+        hours, minutes, seconds = numbers
+        return max(0, hours * 3600 + minutes * 60 + seconds)
+
+    return 0
+
+
 def slugify_competition_name(name: str) -> str:
     """
     Z názvu súťaže vytvorí URL slug.
@@ -214,6 +238,20 @@ def build_players_productivity_url(
     )
 
     return f"{BASE_URL}/sk/stats/players/{competition_id}/{slug}?{query}"
+
+
+def build_team_player_stats_url(
+    competition_id: int,
+    competition_name: str,
+    competitor_id: int,
+    team_name: str,
+) -> str:
+    competition_slug = slugify_competition_name(competition_name)
+    team_slug = slugify_competition_name(team_name)
+    return (
+        f"{BASE_URL}/sk/stats/teams/{competition_id}/{competition_slug}/"
+        f"team/{competitor_id}/{team_slug}/PlayerStats"
+    )
 
 
 # # INFO O SÚŤAŽI
@@ -426,6 +464,175 @@ def fetch_player_productivity(players_url: str) -> list[dict]:
         player["rank"] = index
 
     return rows
+
+
+class SzfbPlayerStatsParseError(ValueError):
+    pass
+
+
+def _table_headers(table) -> list[str]:
+    return [
+        normalize_spaces(cell.get_text(" ", strip=True))
+        for cell in table.select("thead th")
+    ]
+
+
+def _find_stats_section_table(soup: BeautifulSoup, title: str, headers: list[str]):
+    title_key = normalize_name_key(title)
+    heading = next(
+        (
+            item
+            for item in soup.find_all(["h2", "h3"])
+            if normalize_name_key(normalize_spaces(item.get_text(" ", strip=True)))
+            == title_key
+        ),
+        None,
+    )
+
+    if not heading:
+        raise SzfbPlayerStatsParseError(f"SZFB section '{title}' was not found.")
+
+    table = heading.find_next("table")
+
+    if not table:
+        raise SzfbPlayerStatsParseError(
+            f"SZFB table for section '{title}' was not found."
+        )
+
+    actual_headers = _table_headers(table)
+    if actual_headers != headers:
+        raise SzfbPlayerStatsParseError(
+            f"Unexpected SZFB headers in '{title}': {actual_headers!r}."
+        )
+
+    return table
+
+
+def _extract_szfb_player_id(cell) -> int | None:
+    link = cell.find("a", href=True)
+    if not link:
+        return None
+
+    match = re.search(r"/player/(\d+)(?:/|$)", link.get("href", ""))
+    return int(match.group(1)) if match else None
+
+
+def _direct_cell_text(cells, index: int) -> str:
+    if index >= len(cells):
+        return ""
+    return normalize_spaces(cells[index].get_text(" ", strip=True))
+
+
+def parse_team_player_stats_html(html: str) -> dict:
+    """Parse the two explicit tables on an SZFB team PlayerStats page."""
+    soup = BeautifulSoup(html, "lxml")
+    goalie_headers = [
+        "#", "Meno", "Rok narodenia", "Z", "V", "Vp", "P", "Pp",
+        "SOGA", "GA", "GAA", "SVS", "SVS_PCT", "MIN", "SO",
+    ]
+    player_headers = [
+        "#", "Meno", "Rok narodenia", "Post", "Z", "G", "A", "B",
+        "PTS_AVG", "PIM",
+    ]
+    goalie_table = _find_stats_section_table(soup, "Brankári", goalie_headers)
+    player_table = _find_stats_section_table(soup, "Hráči", player_headers)
+
+    players = []
+    for rank, row in enumerate(player_table.select("tbody tr"), start=1):
+        cells = row.find_all("td", recursive=False)
+        if len(cells) < len(player_headers):
+            raise SzfbPlayerStatsParseError(
+                f"Unexpected player row with {len(cells)} cells."
+            )
+
+        szfb_player_id = _extract_szfb_player_id(cells[1])
+        player_name = format_player_name(
+            _direct_cell_text(cells, 1),
+            source_order="surname_first",
+        )
+        if not szfb_player_id or not player_name:
+            raise SzfbPlayerStatsParseError(
+                "Player row is missing its SZFB player ID or name."
+            )
+
+        players.append(
+            {
+                "szfb_player_id": szfb_player_id,
+                "rank": rank,
+                "jersey_number": parse_int(_direct_cell_text(cells, 0), 0) or None,
+                "player_name": player_name,
+                "birth_year": parse_int(_direct_cell_text(cells, 2), 0) or None,
+                "team_short_name": "",
+                "player_position": _direct_cell_text(cells, 3),
+                "games": parse_int(_direct_cell_text(cells, 4)),
+                "goals": parse_int(_direct_cell_text(cells, 5)),
+                "assists": parse_int(_direct_cell_text(cells, 6)),
+                "points": parse_int(_direct_cell_text(cells, 7)),
+                "points_avg": parse_decimal(_direct_cell_text(cells, 8)),
+                "esp": 0,
+                "ppp": 0,
+                "shp": 0,
+                "pim": parse_int(_direct_cell_text(cells, 9)),
+            }
+        )
+
+    goalies = []
+    for rank, row in enumerate(goalie_table.select("tbody tr"), start=1):
+        cells = row.find_all("td", recursive=False)
+        if len(cells) < len(goalie_headers):
+            raise SzfbPlayerStatsParseError(
+                f"Unexpected goalie row with {len(cells)} cells."
+            )
+
+        szfb_player_id = _extract_szfb_player_id(cells[1])
+        player_name = format_player_name(
+            _direct_cell_text(cells, 1),
+            source_order="surname_first",
+        )
+        if not szfb_player_id or not player_name:
+            raise SzfbPlayerStatsParseError(
+                "Goalie row is missing its SZFB player ID or name."
+            )
+
+        goalies.append(
+            {
+                "szfb_player_id": szfb_player_id,
+                "rank": rank,
+                "jersey_number": parse_int(_direct_cell_text(cells, 0), 0) or None,
+                "player_name": player_name,
+                "birth_year": parse_int(_direct_cell_text(cells, 2), 0) or None,
+                "player_position": "G",
+                "games": parse_int(_direct_cell_text(cells, 3)),
+                "wins": parse_int(_direct_cell_text(cells, 4)),
+                "overtime_wins": parse_int(_direct_cell_text(cells, 5)),
+                "losses": parse_int(_direct_cell_text(cells, 6)),
+                "overtime_losses": parse_int(_direct_cell_text(cells, 7)),
+                "shots_against": parse_int(_direct_cell_text(cells, 8)),
+                "goals_against": parse_int(_direct_cell_text(cells, 9)),
+                "goals_against_average": parse_decimal(_direct_cell_text(cells, 10)),
+                "saves": parse_int(_direct_cell_text(cells, 11)),
+                "save_percentage": parse_percentage(_direct_cell_text(cells, 12)),
+                "minutes_played_seconds": parse_duration_seconds(
+                    _direct_cell_text(cells, 13)
+                ),
+                "shutouts": parse_int(_direct_cell_text(cells, 14)),
+            }
+        )
+
+    for group_name, group in (("players", players), ("goalies", goalies)):
+        group_ids = [item["szfb_player_id"] for item in group]
+        if len(group_ids) != len(set(group_ids)):
+            raise SzfbPlayerStatsParseError(
+                f"Duplicate SZFB player ID in {group_name} table."
+            )
+
+    return {"players": players, "goalies": goalies}
+
+
+def fetch_team_player_stats(player_stats_url: str) -> dict:
+    response = requests.get(player_stats_url, headers=HEADERS, timeout=30)
+    response.raise_for_status()
+    return parse_team_player_stats_html(response.text)
 
 
 # # POMOCNÉ FUNKCIE PRE ZÁPASY

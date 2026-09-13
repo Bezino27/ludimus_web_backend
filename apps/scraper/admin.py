@@ -10,8 +10,9 @@ from .revalidation import (
 
 from .models import (
     ClubPlayer,
-    SzfbAutoSyncConfig,
+    SzfbWatchAutoSyncConfig,
     SzfbCompetition,
+    SzfbGoalieStat,
     SzfbStandingRow,
     SzfbTeamWatch,
     SzfbMatch,
@@ -42,10 +43,10 @@ class SzfbCompetitionAdmin(admin.ModelAdmin):
     )
 
 
-@admin.register(SzfbAutoSyncConfig)
-class SzfbAutoSyncConfigAdmin(admin.ModelAdmin):
+@admin.register(SzfbWatchAutoSyncConfig)
+class SzfbWatchAutoSyncConfigAdmin(admin.ModelAdmin):
     list_display = (
-        "club",
+        "watch",
         "is_enabled",
         "frequency",
         "weekday",
@@ -62,8 +63,9 @@ class SzfbAutoSyncConfigAdmin(admin.ModelAdmin):
         "last_status",
     )
     search_fields = (
-        "club__name",
-        "club__slug",
+        "watch__club__name",
+        "watch__club__slug",
+        "watch__label",
         "last_message",
     )
     readonly_fields = (
@@ -80,7 +82,7 @@ class SzfbAutoSyncConfigAdmin(admin.ModelAdmin):
             "Nastavenie automatiky",
             {
                 "fields": (
-                    "club",
+                    "watch",
                     "is_enabled",
                     "frequency",
                     "weekday",
@@ -111,7 +113,7 @@ class SzfbAutoSyncConfigAdmin(admin.ModelAdmin):
     )
 
     ordering = (
-        "club__name",
+        "watch__club__name",
     )
 
 
@@ -306,6 +308,7 @@ class SzfbPlayerStatAdmin(admin.ModelAdmin):
     list_display = (
         "watched_team",
         "club_player",
+        "szfb_player_id",
         "rank",
         "player_name",
         "birth_year",
@@ -341,6 +344,7 @@ class SzfbPlayerStatAdmin(admin.ModelAdmin):
                 "fields": (
                     "watched_team",
                     "club_player",
+                    "szfb_player_id",
                     "rank",
                     "player_name",
                     "birth_year",
@@ -398,3 +402,31 @@ class SzfbPlayerStatAdmin(admin.ModelAdmin):
         "display_order",
         "rank",
     )
+
+
+@admin.register(SzfbGoalieStat)
+class SzfbGoalieStatAdmin(admin.ModelAdmin):
+    list_display = (
+        "watched_team",
+        "club_player",
+        "szfb_player_id",
+        "jersey_number",
+        "player_name",
+        "birth_year",
+        "games",
+        "wins",
+        "losses",
+        "shots_against",
+        "goals_against",
+        "saves",
+        "save_percentage",
+        "minutes_played_seconds",
+        "shutouts",
+    )
+    list_filter = ("watched_team",)
+    search_fields = (
+        "player_name",
+        "szfb_player_id",
+        "club_player__full_name",
+    )
+    ordering = ("watched_team", "rank", "player_name")
