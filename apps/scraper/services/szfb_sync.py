@@ -301,6 +301,8 @@ def sync_competition_from_home_url(
                         position=row["position"],
                         team_name=row["team_name"],
                         played=row["played"],
+                        goals_for=row["goals_for"],
+                        goals_against=row["goals_against"],
                         points=row["points"],
                     )
                     for row in standings
@@ -326,6 +328,14 @@ def sync_competition_from_home_url(
                             opponent=item["opponent"],
                             venue=item["venue"],
                             result=item["result"],
+                            decision_type=(
+                                item.get("decision_type")
+                                or (
+                                    SzfbMatch.DECISION_REGULATION
+                                    if item["match_type"] == "finished"
+                                    else SzfbMatch.DECISION_UNKNOWN
+                                )
+                            ),
                             is_home=item["is_home"],
                             external_key=item["external_key"],
                         )

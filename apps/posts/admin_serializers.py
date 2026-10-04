@@ -54,6 +54,8 @@ class AdminPostSerializer(serializers.ModelSerializer):
             "featured_image",
             "featured_image_url",
             "featured_image_path",
+            "image_width",
+            "image_height",
             "status",
             "published_at",
             "meta_title",
@@ -70,6 +72,8 @@ class AdminPostSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "featured_image",
+            "image_width",
+            "image_height",
         ]
 
     def get_featured_image_url(self, obj):

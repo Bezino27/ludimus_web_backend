@@ -114,7 +114,7 @@ class AdminCategorySerializer(serializers.ModelSerializer):
         fields = [
             "id", "club", "club_name", "name", "slug", "season",
             "birth_year_from", "birth_year_to", "display_years", "category_subname",
-            "league_name", "hero_image", "hero_image_url", "coach_name", "coach_email",
+            "league_name", "description", "hero_image", "hero_image_url", "coach_name", "coach_email",
             "coach_phone", "order", "is_active", "szfb_team_watch",
             "szfb_team_watch_id", "szfb_team_watch_label",
             "szfb_team_watch_competition_name", "szfb_team_watch_competition_season",

@@ -5,9 +5,12 @@ from apps.scraper.views import (
     AdminClubPlayerUpdateView,
     AdminSzfbCompetitionListView,
     AdminSzfbCompetitionStandingsView,
+    AdminSzfbCompetitionStandingZonesView,
     AdminSzfbCompetitionSyncView,
     AdminSzfbPlayerStatUpdateView,
     AdminSzfbTeamWatchListView,
+    AdminSzfbTeamBrandListCreateView,
+    AdminSzfbTeamBrandDetailView,
     AdminSzfbWatchMatchesView,
     AdminSzfbWatchGoaliesView,
     AdminSzfbWatchPlayersView,
@@ -29,6 +32,16 @@ urlpatterns = [
         name="admin-szfb-club-player-update",
     ),
     path(
+        "team-brands/",
+        AdminSzfbTeamBrandListCreateView.as_view(),
+        name="admin-szfb-team-brand-list-create",
+    ),
+    path(
+        "team-brands/<int:brand_id>/",
+        AdminSzfbTeamBrandDetailView.as_view(),
+        name="admin-szfb-team-brand-detail",
+    ),
+    path(
         "watches/",
         AdminSzfbTeamWatchListView.as_view(),
         name="admin-szfb-watch-list",
@@ -47,6 +60,11 @@ urlpatterns = [
         "competitions/<int:competition_id>/standings/",
         AdminSzfbCompetitionStandingsView.as_view(),
         name="admin-szfb-competition-standings",
+    ),
+    path(
+        "competitions/<int:competition_id>/standing-zones/",
+        AdminSzfbCompetitionStandingZonesView.as_view(),
+        name="admin-szfb-competition-standing-zones",
     ),
     path(
         "watches/<int:watch_id>/matches/",

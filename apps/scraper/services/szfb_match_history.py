@@ -64,6 +64,7 @@ def persist_finished_match_history(watch, matches):
                 "opponent": match["opponent"],
                 "venue": match.get("venue", ""),
                 "result": match["result"].strip(),
+                "decision_type": match.get("decision_type", ""),
                 "is_home": match.get("is_home"),
             },
         )
@@ -72,3 +73,55 @@ def persist_finished_match_history(watch, matches):
         get_match_history_for_watch(watch).values_list("id", flat=True)[:MATCH_HISTORY_LIMIT]
     )
     get_match_history_for_watch(watch).exclude(id__in=retained_ids).delete()
+
+
+def parse_finished_result(result):
+    match = re.fullmatch(r"(\d+)\s*:\s*(\d+)", (result or "").strip())
+    if not match:
+        return None
+
+    return int(match.group(1)), int(match.group(2))
+
+
+def get_match_form_code(match):
+    """
+    Vráti výsledok z pohľadu sledovaného tímu.
+
+    V / P   = riadny čas
+    VP / PP = po predĺžení
+    VN / PN = po samostatných nájazdoch
+    """
+    score = parse_finished_result(match.result)
+    if not score or match.is_home is None:
+        return None
+
+    home_goals, away_goals = score
+    team_goals = home_goals if match.is_home else away_goals
+    opponent_goals = away_goals if match.is_home else home_goals
+
+    if team_goals == opponent_goals:
+        return None
+
+    won = team_goals > opponent_goals
+    decision_type = match.decision_type or "regulation"
+
+    if decision_type == "overtime":
+        return "VP" if won else "PP"
+
+    if decision_type == "shootout":
+        return "VN" if won else "PN"
+
+    return "V" if won else "P"
+
+
+def get_recent_form_for_watch(watch):
+    """
+    Vráti maximálne posledných 5 výsledkov vo forme V/P/VP/PP/VN/PN.
+    História je už obmedzená na päť zápasov, ale limit nechávame aj tu.
+    """
+    history = list(get_match_history_for_watch(watch)[:MATCH_HISTORY_LIMIT])
+    return [
+        code
+        for code in (get_match_form_code(match) for match in history)
+        if code
+    ]

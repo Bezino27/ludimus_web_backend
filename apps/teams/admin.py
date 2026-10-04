@@ -81,7 +81,7 @@ class CategoryAdmin(admin.ModelAdmin):
     fieldsets = (
         ("Základné údaje", {"fields": ("club", "name", "slug", "season", "order", "is_active")}),
         ("Veková kategória", {"fields": ("birth_year_from", "birth_year_to", "category_subname")}),
-        ("Web", {"fields": ("league_name", "hero_image", "szfb_team_watch")}),
+        ("Web", {"fields": ("league_name", "description", "hero_image", "szfb_team_watch")}),
         ("Tréner", {"fields": ("coach_name", "coach_email", "coach_phone")}),
     )
 

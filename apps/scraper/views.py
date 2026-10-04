@@ -1,10 +1,12 @@
 from threading import Thread
-from django.db.models import Count, Prefetch, Q
+from django.db import transaction
+from django.db.models import Count, Max, Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
@@ -19,6 +21,8 @@ from apps.scraper.models import (
     SzfbPlayerStat,
     SzfbWatchAutoSyncConfig,
     SzfbStandingRow,
+    SzfbStandingZone,
+    SzfbTeamBrand,
     SzfbTeamWatch,
 )
 from apps.scraper.serializers import (
@@ -31,11 +35,14 @@ from apps.scraper.serializers import (
     AdminSzfbWatchAutoSyncConfigSerializer,
     AdminSzfbPlayerStatUpdateSerializer,
     AdminSzfbStandingRowSerializer,
+    SzfbStandingZoneSerializer,
+    AdminSzfbTeamBrandWriteSerializer,
     AdminSzfbWatchSettingsSerializer,
     SzfbMatchSerializer,
     SzfbMatchHistorySerializer,
     SzfbPlayerStatSerializer,
     SzfbStandingRowSerializer,
+    SzfbTeamBrandSerializer,
     SzfbTeamWatchAdminSerializer,
     SzfbTeamWatchSerializer,
 )
@@ -44,7 +51,11 @@ from apps.scraper.services.szfb_sync_runner import (
     expire_stale_running_competition_syncs,
     run_competition_sync,
 )
-from apps.scraper.services.szfb_match_history import get_match_history_for_watch
+from apps.scraper.services.szfb_match_history import (
+    get_match_history_for_watch,
+    get_recent_form_for_watch,
+)
+from apps.scraper.services.team_branding import get_club_team_brands
 from apps.common.revalidation import schedule_revalidation
 from apps.scraper.revalidation import (
     get_player_revalidation_paths,
@@ -70,6 +81,70 @@ def get_editor_watch_or_404(request, watch_id):
     return get_object_or_404(queryset, id=watch_id)
 
 
+def get_editor_club_or_404(request, club_slug):
+    if not club_slug:
+        raise ValidationError({"club": "Chýba identifikátor klubu."})
+
+    membership = get_object_or_404(
+        ClubMembership.objects.select_related("club"),
+        user=request.user,
+        is_active=True,
+        role__in=EDITOR_ROLES,
+        club__slug=club_slug,
+    )
+    return membership.club
+
+
+def schedule_team_brand_revalidation(club, reason):
+    paths = []
+    watches = SzfbTeamWatch.objects.select_related("club", "competition").filter(
+        club=club
+    )
+    for watch in watches:
+        paths.extend(get_watch_revalidation_paths(watch))
+
+    schedule_revalidation(
+        list(dict.fromkeys(paths)),
+        reason=reason,
+        club_slug=club.slug,
+    )
+
+
+def schedule_competition_revalidation(competition, club, reason):
+    paths = []
+    watches = SzfbTeamWatch.objects.select_related("club", "competition").filter(
+        competition=competition,
+        club=club,
+    )
+    for watch in watches:
+        paths.extend(get_watch_revalidation_paths(watch))
+
+    schedule_revalidation(
+        list(dict.fromkeys(paths)),
+        reason=reason,
+        club_slug=club.slug,
+    )
+
+
+class WatchBrandContextMixin:
+    _watch_for_branding = None
+
+    def get_branding_watch(self):
+        if self._watch_for_branding is None:
+            watch_id = self.kwargs.get("watch_id") or self.kwargs.get("pk")
+            self._watch_for_branding = get_object_or_404(
+                SzfbTeamWatch.objects.select_related("competition", "club"),
+                id=watch_id,
+            )
+        return self._watch_for_branding
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        watch = self.get_branding_watch()
+        context["team_brands"] = get_club_team_brands(watch.club)
+        return context
+
+
 def get_upcoming_matches(watch):
     now = timezone.localtime()
     return (
@@ -83,36 +158,42 @@ def get_upcoming_matches(watch):
     )
 
 
-class SzfbTeamWatchDetailView(RetrieveAPIView):
-    queryset = SzfbTeamWatch.objects.select_related("competition", "club")
+class SzfbTeamWatchDetailView(WatchBrandContextMixin, RetrieveAPIView):
     serializer_class = SzfbTeamWatchSerializer
 
+    def get_object(self):
+        return self.get_branding_watch()
 
-class SzfbWatchStandingsView(ListAPIView):
+
+class SzfbWatchStandingsView(WatchBrandContextMixin, ListAPIView):
     serializer_class = SzfbStandingRowSerializer
 
     def get_queryset(self):
-        watch_id = self.kwargs["watch_id"]
-
-        watch = get_object_or_404(
-            SzfbTeamWatch.objects.select_related("competition", "club"),
-            id=watch_id,
-        )
-
+        watch = self.get_branding_watch()
         return watch.competition.standings.order_by("position")
 
 
-class SzfbWatchResultsView(ListAPIView):
-    serializer_class = SzfbMatchSerializer
+class SzfbWatchStandingZonesView(ListAPIView):
+    serializer_class = SzfbStandingZoneSerializer
 
     def get_queryset(self):
         watch_id = self.kwargs["watch_id"]
-
         watch = get_object_or_404(
-            SzfbTeamWatch.objects.select_related("competition", "club"),
+            SzfbTeamWatch.objects.select_related("competition"),
             id=watch_id,
         )
+        return watch.competition.standing_zones.filter(is_active=True).order_by(
+            "display_order",
+            "start_position",
+            "id",
+        )
 
+
+class SzfbWatchResultsView(WatchBrandContextMixin, ListAPIView):
+    serializer_class = SzfbMatchSerializer
+
+    def get_queryset(self):
+        watch = self.get_branding_watch()
         return (
             watch.matches
             .filter(match_type="finished")
@@ -120,17 +201,11 @@ class SzfbWatchResultsView(ListAPIView):
         )
 
 
-class SzfbWatchUpcomingView(ListAPIView):
+class SzfbWatchUpcomingView(WatchBrandContextMixin, ListAPIView):
     serializer_class = SzfbMatchSerializer
 
     def get_queryset(self):
-        watch_id = self.kwargs["watch_id"]
-
-        watch = get_object_or_404(
-            SzfbTeamWatch.objects.select_related("competition", "club"),
-            id=watch_id,
-        )
-
+        watch = self.get_branding_watch()
         return (
             watch.matches
             .filter(match_type="upcoming")
@@ -144,11 +219,17 @@ class SzfbWatchDashboardView(APIView):
             SzfbTeamWatch.objects.select_related("competition", "club"),
             id=watch_id,
         )
+        team_brands = get_club_team_brands(watch.club)
+        serializer_context = {
+            "request": request,
+            "team_brands": team_brands,
+        }
 
         standings = watch.competition.standings.order_by("position")
-
+        standing_zones = watch.competition.standing_zones.filter(
+            is_active=True
+        ).order_by("display_order", "start_position", "id")
         results = get_match_history_for_watch(watch)[:5]
-
         upcoming = get_upcoming_matches(watch)[:8]
 
         player_stats = (
@@ -163,10 +244,30 @@ class SzfbWatchDashboardView(APIView):
 
         return Response(
             {
-                "watch": SzfbTeamWatchSerializer(watch).data,
-                "standings": SzfbStandingRowSerializer(standings, many=True).data,
-                "results": SzfbMatchHistorySerializer(results, many=True).data,
-                "upcoming": SzfbMatchSerializer(upcoming, many=True).data,
+                "watch": SzfbTeamWatchSerializer(
+                    watch,
+                    context=serializer_context,
+                ).data,
+                "standings": SzfbStandingRowSerializer(
+                    standings,
+                    many=True,
+                    context=serializer_context,
+                ).data,
+                "standing_zones": SzfbStandingZoneSerializer(
+                    standing_zones,
+                    many=True,
+                ).data,
+                "results": SzfbMatchHistorySerializer(
+                    results,
+                    many=True,
+                    context=serializer_context,
+                ).data,
+                "form": get_recent_form_for_watch(watch),
+                "upcoming": SzfbMatchSerializer(
+                    upcoming,
+                    many=True,
+                    context=serializer_context,
+                ).data,
                 "player_stats": SzfbPlayerStatSerializer(
                     player_stats,
                     many=True,
@@ -182,7 +283,7 @@ class SzfbWatchNextMatchView(APIView):
             SzfbTeamWatch.objects.select_related("competition", "club"),
             id=watch_id,
         )
-
+        team_brands = get_club_team_brands(watch.club)
         next_match = get_upcoming_matches(watch).first()
 
         if not next_match:
@@ -196,7 +297,13 @@ class SzfbWatchNextMatchView(APIView):
         return Response(
             {
                 "watch_id": watch.id,
-                "next_match": SzfbMatchSerializer(next_match).data,
+                "next_match": SzfbMatchSerializer(
+                    next_match,
+                    context={
+                        "request": request,
+                        "team_brands": team_brands,
+                    },
+                ).data,
             }
         )
 
@@ -443,20 +550,24 @@ class AdminSzfbCompetitionListView(ListAPIView):
 class AdminSzfbCompetitionStandingsView(ListAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = AdminSzfbStandingRowSerializer
+    _club = None
+
+    def get_club(self):
+        if self._club is None:
+            self._club = get_editor_club_or_404(
+                self.request,
+                self.request.query_params.get("club", ""),
+            )
+        return self._club
 
     def get_queryset(self):
         competition_id = self.kwargs["competition_id"]
-        club_slug = self.request.query_params.get("club")
-
-        competition_queryset = SzfbCompetition.objects.all()
-
-        if club_slug:
-            competition_queryset = competition_queryset.filter(
-                watched_teams__club__slug=club_slug,
-            )
+        club = self.get_club()
 
         get_object_or_404(
-            competition_queryset.distinct(),
+            SzfbCompetition.objects.filter(
+                watched_teams__club=club,
+            ).distinct(),
             id=competition_id,
         )
 
@@ -466,29 +577,321 @@ class AdminSzfbCompetitionStandingsView(ListAPIView):
             .order_by("position")
         )
 
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["team_brands"] = get_club_team_brands(self.get_club())
+        return context
+
+
+class AdminSzfbCompetitionStandingZonesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_competition_and_club(self, request, competition_id):
+        club_slug = request.data.get("club_slug") or request.query_params.get(
+            "club",
+            "",
+        )
+        club = get_editor_club_or_404(request, club_slug)
+        competition = get_object_or_404(
+            SzfbCompetition.objects.filter(
+                watched_teams__club=club,
+            ).distinct(),
+            id=competition_id,
+        )
+        return competition, club
+
+    def get(self, request, competition_id):
+        competition, _club = self.get_competition_and_club(
+            request,
+            competition_id,
+        )
+        zones = competition.standing_zones.order_by(
+            "display_order",
+            "start_position",
+            "id",
+        )
+        return Response(SzfbStandingZoneSerializer(zones, many=True).data)
+
+    def put(self, request, competition_id):
+        competition, club = self.get_competition_and_club(
+            request,
+            competition_id,
+        )
+        zones_data = request.data.get("zones")
+
+        if not isinstance(zones_data, list):
+            raise ValidationError({"zones": "Zóny musia byť zoznam."})
+
+        validated_zones = []
+        allowed_kinds = {
+            SzfbStandingZone.KIND_PLAYOFF,
+            SzfbStandingZone.KIND_BARAGE,
+            SzfbStandingZone.KIND_RELEGATION,
+        }
+
+        for index, item in enumerate(zones_data):
+            if not isinstance(item, dict):
+                raise ValidationError(
+                    {"zones": f"Zóna #{index + 1} má neplatný formát."}
+                )
+
+            kind = str(item.get("kind") or "").strip()
+            label = str(item.get("label") or "").strip()
+
+            if kind not in allowed_kinds:
+                raise ValidationError(
+                    {"zones": f"Zóna #{index + 1} má neplatný typ."}
+                )
+            if not label:
+                raise ValidationError(
+                    {"zones": f"Zóna #{index + 1} nemá názov."}
+                )
+
+            try:
+                start_position = int(item.get("start_position"))
+                end_position = int(item.get("end_position"))
+                display_order = int(item.get("display_order", index))
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(
+                    {"zones": f"Zóna #{index + 1} má neplatné pozície."}
+                ) from exc
+
+            if start_position < 1 or end_position < 1:
+                raise ValidationError(
+                    {"zones": "Pozície v zónach musia byť kladné čísla."}
+                )
+            if start_position > end_position:
+                raise ValidationError(
+                    {
+                        "zones": (
+                            f"Zóna '{label}' má začiatok väčší než koniec."
+                        )
+                    }
+                )
+
+            validated_zones.append(
+                {
+                    "kind": kind,
+                    "label": label,
+                    "start_position": start_position,
+                    "end_position": end_position,
+                    "display_order": max(0, display_order),
+                    "is_active": bool(item.get("is_active", True)),
+                }
+            )
+
+        active_zones = sorted(
+            [zone for zone in validated_zones if zone["is_active"]],
+            key=lambda zone: (zone["start_position"], zone["end_position"]),
+        )
+        previous_end = 0
+        for zone in active_zones:
+            if zone["start_position"] <= previous_end:
+                raise ValidationError(
+                    {"zones": "Aktívne zóny sa nesmú prekrývať."}
+                )
+            previous_end = zone["end_position"]
+
+        max_position = competition.standings.aggregate(
+            max_position=Max("position")
+        )["max_position"]
+        if max_position:
+            too_high = next(
+                (
+                    zone
+                    for zone in active_zones
+                    if zone["end_position"] > max_position
+                ),
+                None,
+            )
+            if too_high:
+                raise ValidationError(
+                    {
+                        "zones": (
+                            f"Zóna '{too_high['label']}' končí na pozícii "
+                            f"{too_high['end_position']}, ale tabuľka má iba "
+                            f"{max_position} tímov."
+                        )
+                    }
+                )
+
+        with transaction.atomic():
+            competition.standing_zones.all().delete()
+            SzfbStandingZone.objects.bulk_create(
+                [
+                    SzfbStandingZone(
+                        competition=competition,
+                        **zone,
+                    )
+                    for zone in validated_zones
+                ]
+            )
+
+        schedule_competition_revalidation(
+            competition,
+            club,
+            reason="SZFB standing zones updated via admin API",
+        )
+
+        zones = competition.standing_zones.order_by(
+            "display_order",
+            "start_position",
+            "id",
+        )
+        return Response(SzfbStandingZoneSerializer(zones, many=True).data)
+
+
+class AdminSzfbTeamBrandListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get(self, request):
+        club = get_editor_club_or_404(
+            request,
+            request.query_params.get("club", ""),
+        )
+        brands = SzfbTeamBrand.objects.filter(club=club).order_by(
+            "display_name",
+            "id",
+        )
+        return Response(
+            SzfbTeamBrandSerializer(
+                brands,
+                many=True,
+                context={"request": request},
+            ).data
+        )
+
+    def post(self, request):
+        club_slug = request.data.get("club_slug") or request.query_params.get(
+            "club",
+            "",
+        )
+        club = get_editor_club_or_404(request, club_slug)
+
+        data = {
+            key: request.data.get(key)
+            for key in request.data.keys()
+            if key not in {"club_slug", "logo"}
+        }
+        if "logo" in request.FILES:
+            data["logo"] = request.FILES["logo"]
+
+        serializer = AdminSzfbTeamBrandWriteSerializer(
+            data=data,
+            context={
+                "request": request,
+                "club": club,
+            },
+        )
+        serializer.is_valid(raise_exception=True)
+        brand = serializer.save()
+
+        schedule_team_brand_revalidation(
+            club,
+            reason="SZFB team brand created via admin API",
+        )
+
+        return Response(
+            SzfbTeamBrandSerializer(
+                brand,
+                context={"request": request},
+            ).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminSzfbTeamBrandDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_brand(self, request, brand_id):
+        club_slug = request.data.get("club_slug") or request.query_params.get(
+            "club",
+            "",
+        )
+        club = get_editor_club_or_404(request, club_slug)
+        brand = get_object_or_404(
+            SzfbTeamBrand.objects.select_related("club"),
+            id=brand_id,
+            club=club,
+        )
+        return club, brand
+
+    def patch(self, request, brand_id):
+        club, brand = self.get_brand(request, brand_id)
+        data = {
+            key: request.data.get(key)
+            for key in request.data.keys()
+            if key not in {"club_slug", "logo"}
+        }
+        if "logo" in request.FILES:
+            data["logo"] = request.FILES["logo"]
+
+        serializer = AdminSzfbTeamBrandWriteSerializer(
+            brand,
+            data=data,
+            partial=True,
+            context={
+                "request": request,
+                "club": club,
+            },
+        )
+        serializer.is_valid(raise_exception=True)
+        brand = serializer.save()
+
+        schedule_team_brand_revalidation(
+            club,
+            reason="SZFB team brand updated via admin API",
+        )
+
+        return Response(
+            SzfbTeamBrandSerializer(
+                brand,
+                context={"request": request},
+            ).data
+        )
+
+    def delete(self, request, brand_id):
+        club, brand = self.get_brand(request, brand_id)
+        if brand.logo:
+            brand.logo.delete(save=False)
+        brand.delete()
+
+        schedule_team_brand_revalidation(
+            club,
+            reason="SZFB team brand deleted via admin API",
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class AdminSzfbWatchMatchesView(ListAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = AdminSzfbMatchSerializer
+    _watch = None
+
+    def get_watch(self):
+        if self._watch is None:
+            self._watch = get_editor_watch_or_404(
+                self.request,
+                self.kwargs["watch_id"],
+            )
+        return self._watch
 
     def get_queryset(self):
-        watch_id = self.kwargs["watch_id"]
-        club_slug = self.request.query_params.get("club")
-
-        watch_queryset = SzfbTeamWatch.objects.all()
-
-        if club_slug:
-            watch_queryset = watch_queryset.filter(club__slug=club_slug)
-
-        get_object_or_404(watch_queryset, id=watch_id)
-
-        queryset = SzfbMatch.objects.filter(watched_team_id=watch_id)
+        watch = self.get_watch()
+        queryset = SzfbMatch.objects.filter(watched_team=watch)
         match_type = self.request.query_params.get("type")
 
         if match_type in {"finished", "upcoming"}:
             queryset = queryset.filter(match_type=match_type)
 
         return queryset.order_by("match_date", "match_time", "id")
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["team_brands"] = get_club_team_brands(self.get_watch().club)
+        return context
 
 
 class AdminSzfbWatchPlayersView(ListAPIView):

@@ -171,7 +171,10 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.ScopedRateThrottle",
     ),
     "DEFAULT_THROTTLE_RATES": {
-        "recruitment_form": "5/hour",
+        "recruitment_form": os.getenv(
+            "RECRUITMENT_FORM_THROTTLE_RATE",
+            "10/minute",
+        ),
     },
 }
 

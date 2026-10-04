@@ -45,15 +45,23 @@ class RecruitmentFormSerializer(serializers.ModelSerializer):
         return value
 
     def validate_phone(self, value):
-        if value in [None, ""]:
+        if value is None or not value.strip():
             return ""
 
-        value = value.strip().replace(" ", "")
+        compact = re.sub(r"[\s()./-]", "", value.strip())
 
-        # Príklad povoleného formátu: +421900123456
-        if not re.fullmatch(r"^\+421\d{9}$", value):
-            raise serializers.ValidationError(
-                "Telefón musí byť vo formáte +421900123456."
-            )
+        if re.fullmatch(r"0\d{9}", compact):
+            return f"+421{compact[1:]}"
 
-        return value
+        if re.fullmatch(r"00421\d{9}", compact):
+            return f"+{compact[2:]}"
+
+        if re.fullmatch(r"421\d{9}", compact):
+            return f"+{compact}"
+
+        if re.fullmatch(r"\+421\d{9}", compact):
+            return compact
+
+        raise serializers.ValidationError(
+            "Zadajte slovenské číslo, napríklad 0905 748 845 alebo +421 905 748 845."
+        )

@@ -120,7 +120,7 @@ class CategorySerializer(CategoryBaseSerializer):
         model = Category
         fields = [
             "id", "club", "name", "slug", "season", "birth_year_from",
-            "birth_year_to", "category_subname", "display_years", "league_name",
+            "birth_year_to", "category_subname", "display_years", "league_name", "description",
             "hero_image_url", "order", "is_active", "coach_name", "coach_email",
             "coach_phone", "szfb_team_watch_id", "szfb_team_watch_label",
             "szfb_team_watch_competition_name", "szfb_team_watch_competition_season",
@@ -134,7 +134,7 @@ class CategoryBirthYearsSerializer(CategoryBaseSerializer):
         model = Category
         fields = [
             "id", "name", "slug", "season", "birth_year_from", "birth_year_to",
-            "category_subname", "display_years", "league_name", "hero_image_url",
+            "category_subname", "display_years", "league_name", "description", "hero_image_url",
             "coach_name", "coach_email", "coach_phone", "szfb_team_watch_id",
             "szfb_team_watch_label", "szfb_team_watch_competition_name",
             "szfb_team_watch_competition_season", "szfb_watch_id", "szfb_watch_label",

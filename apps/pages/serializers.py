@@ -197,6 +197,7 @@ class PageSerializer(serializers.ModelSerializer):
             "slug": category.slug,
             "category_subname": category.category_subname,
             "league_name": category.league_name,
+            "description": category.description,
             "szfb_team_watch_id": watch.id if watch else None,
             "szfb_team_watch_label": watch.label if watch else None,
             "szfb_team_watch_competition_name": competition.name if competition else None,

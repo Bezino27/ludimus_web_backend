@@ -32,6 +32,11 @@ class Category(TimeStampedModel):
         default="",
         help_text="Názov ligy zobrazovaný na webe, napr. Slovenská florbalová extraliga.",
     )
+    description = models.TextField(
+        blank=True,
+        default="",
+        help_text="Krátky popis kategórie zobrazovaný v hero sekcii na webe.",
+    )
 
     hero_image = models.ImageField(
         upload_to="categories/hero/",

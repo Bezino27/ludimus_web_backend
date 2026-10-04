@@ -202,6 +202,25 @@ def parse_duration_seconds(value: str) -> int:
     return 0
 
 
+def parse_score_pair(value: str):
+    """
+    Prevedie skóre typu "13:3" alebo "13 - 3" na dvojicu čísel.
+    Pri neplatnom formáte vráti None, aby sa neparsovateľné skóre
+    omylom nezmenilo na reálne 0:0.
+    """
+    value = normalize_spaces(value)
+    match = re.fullmatch(r"(\d+)\s*[-:]\s*(\d+)", value)
+
+    if not match:
+        return None
+
+    return int(match.group(1)), int(match.group(2))
+
+
+class SzfbStandingsParseError(ValueError):
+    pass
+
+
 def slugify_competition_name(name: str) -> str:
     """
     Z názvu súťaže vytvorí URL slug.
@@ -318,15 +337,12 @@ def fetch_standings(standings_url: str) -> list[dict]:
     """
     Zo stránky tabuľky vytiahne poradie tímov.
 
-    Vracia zoznam:
-    [
-        {
-            "position": 1,
-            "team_name": "...",
-            "played": 10,
-            "points": 25,
-        }
-    ]
+    Skóre sa ukladá ako dve samostatné čísla:
+    goals_for a goals_against.
+
+    Primárne používame CSS triedy SZFB buniek (GamesPlayed, Score, Points),
+    aby parser nebol závislý iba od pevného indexu stĺpca. Index 8 pre skóre
+    ostáva iba ako bezpečný fallback pre aktuálnu štruktúru SZFB.
     """
     soup = get_soup(standings_url)
     rows = []
@@ -339,7 +355,14 @@ def fetch_standings(standings_url: str) -> list[dict]:
         if len(cells) < 10:
             continue
 
-        position_text = normalize_spaces(cells[0].get_text(" ", strip=True))
+        position_cell = row.select_one("td.column-Counter") or cells[0]
+        played_cell = row.select_one("td.column-GamesPlayed") or cells[2]
+        score_cell = row.select_one("td.column-Score") or cells[8]
+        points_cell = row.select_one("td.column-Points") or cells[9]
+
+        position_text = normalize_spaces(
+            position_cell.get_text(" ", strip=True)
+        )
 
         team_link = cells[1].find("a")
         team_name = (
@@ -348,21 +371,41 @@ def fetch_standings(standings_url: str) -> list[dict]:
             else normalize_spaces(cells[1].get_text(" ", strip=True))
         )
 
-        played_text = normalize_spaces(cells[2].get_text(" ", strip=True))
-        points_text = normalize_spaces(cells[9].get_text(" ", strip=True))
+        played_text = normalize_spaces(
+            played_cell.get_text(" ", strip=True)
+        )
+        score_text = normalize_spaces(
+            score_cell.get_text(" ", strip=True)
+        )
+        points_text = normalize_spaces(
+            points_cell.get_text(" ", strip=True)
+        )
+
+        score_pair = parse_score_pair(score_text)
+        if score_pair is None:
+            raise SzfbStandingsParseError(
+                f"Neplatné skóre v SZFB tabuľke pre tím "
+                f"'{team_name}': {score_text!r}."
+            )
 
         try:
             position = int(position_text)
             played = int(played_text)
             points = int(points_text)
-        except ValueError:
-            continue
+        except ValueError as exc:
+            raise SzfbStandingsParseError(
+                f"Neplatný riadok SZFB tabuľky pre tím '{team_name}'."
+            ) from exc
+
+        goals_for, goals_against = score_pair
 
         rows.append(
             {
                 "position": position,
                 "team_name": team_name,
                 "played": played,
+                "goals_for": goals_for,
+                "goals_against": goals_against,
                 "points": points,
             }
         )
@@ -730,6 +773,33 @@ def _extract_score_from_cell(cell):
     return ""
 
 
+def _extract_decision_type_from_cell(cell, result: str) -> str:
+    """
+    Zachová spôsob rozhodnutia zápasu priamo z programovej tabuľky SZFB.
+
+    SZFB používa:
+    - pp = po predĺžení
+    - sn = po samostatných nájazdoch
+
+    Pri odohranom zápase bez značky ide o riadny čas.
+    Pri budúcom zápase nechávame hodnotu prázdnu.
+    """
+    if not re.fullmatch(r"\d+\s*:\s*\d+", normalize_spaces(result or "")):
+        return ""
+
+    for span in cell.find_all("span"):
+        code = normalize_spaces(span.get_text(" ", strip=True)).lower()
+        title = normalize_spaces(span.get("title", "")).lower()
+
+        if code == "sn" or "samostatn" in title:
+            return "shootout"
+
+        if code == "pp" or "predĺž" in title or "predlz" in title:
+            return "overtime"
+
+    return "regulation"
+
+
 def classify_match_type(result: str) -> str:
     normalized_result = normalize_spaces(result or "")
     if re.fullmatch(r"\d+\s*:\s*\d+", normalized_result):
@@ -775,6 +845,10 @@ def fetch_matches(results_url: str) -> list[dict]:
         home_team = _extract_team_name_from_cell(home_cell)
         away_team = _extract_team_name_from_cell(away_cell)
         result = _extract_score_from_cell(score_cell)
+        decision_type = _extract_decision_type_from_cell(
+            score_cell,
+            result,
+        )
 
         if not home_team or not away_team:
             continue
@@ -823,6 +897,7 @@ def fetch_matches(results_url: str) -> list[dict]:
                 "team2": away_team,
                 "venue": venue,
                 "result": result,
+                "decision_type": decision_type,
             }
         )
 
@@ -859,6 +934,7 @@ def filter_matches_for_team(matches: list[dict], team_name: str) -> list[dict]:
                 "venue": match["venue"],
                 "opponent": opponent,
                 "result": match["result"],
+                "decision_type": match.get("decision_type", ""),
                 "is_home": is_home,
                 "external_key": (
                     f"{team_name}|{match['match_type']}|{match['match_date']}|"

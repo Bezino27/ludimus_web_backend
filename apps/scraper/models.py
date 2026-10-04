@@ -2,6 +2,7 @@ from datetime import datetime, time as datetime_time, timedelta
 import re
 import unicodedata
 
+from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
 
@@ -13,6 +14,19 @@ def normalize_player_name(value: str) -> str:
     value = value.lower()
     value = re.sub(r"\s+", " ", value)
     return value.strip()
+
+
+def normalize_team_match_key(value: str) -> str:
+    """
+    Normalizuje ručne nastaviteľný kľúč tímu pre branding/logo resolver.
+    Kľúč je nezávislý od sezóny a SZFB competitor_id.
+    """
+    value = value or ""
+    value = unicodedata.normalize("NFKD", value)
+    value = value.encode("ascii", "ignore").decode("ascii")
+    value = value.lower()
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def build_club_player_identity_key(full_name: str, birth_year) -> str:
@@ -69,6 +83,8 @@ class SzfbStandingRow(models.Model):
     position = models.PositiveIntegerField()
     team_name = models.CharField(max_length=255)
     played = models.PositiveIntegerField(default=0)
+    goals_for = models.PositiveIntegerField(null=True, blank=True)
+    goals_against = models.PositiveIntegerField(null=True, blank=True)
     points = models.IntegerField(default=0)
 
     class Meta:
@@ -77,6 +93,100 @@ class SzfbStandingRow(models.Model):
 
     def __str__(self):
         return f"{self.position}. {self.team_name} - {self.points}b"
+
+
+class SzfbTeamBrand(models.Model):
+    """
+    Persistentný branding tímu v rámci Ludimus klubu.
+
+    Nie je naviazaný na súťaž, sezónu ani competitor_id, takže jedno logo
+    môže používať mužský aj juniorský watch a sync ho nikdy nevymaže.
+    """
+    club = models.ForeignKey(
+        "clubs.Club",
+        on_delete=models.CASCADE,
+        related_name="szfb_team_brands",
+    )
+    display_name = models.CharField(max_length=255)
+    match_key = models.CharField(max_length=255)
+    normalized_match_key = models.CharField(max_length=255, db_index=True)
+    logo = models.ImageField(
+        upload_to="teams/logos/",
+        null=True,
+        blank=True,
+    )
+    shadow_color = models.CharField(
+        max_length=7,
+        null=True,
+        blank=True,
+        validators=[
+            RegexValidator(
+                regex=r"^#[0-9A-Fa-f]{6}$",
+                message="Farba musí byť HEX hodnota vo formáte #RRGGBB.",
+            )
+        ],
+        help_text=(
+            "Záložná farba tieňa loga použitá iba vtedy, keď automatická "
+            "detekcia farby zlyhá."
+        ),
+    )
+    use_shadow_color = models.BooleanField(
+        default=False,
+        help_text="Ak je zapnuté, manuálna farba má prednosť pred automatickou detekciou.",
+    )
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["display_name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["club", "normalized_match_key"],
+                name="unique_szfb_team_brand_match_key_per_club",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        self.normalized_match_key = normalize_team_match_key(self.match_key)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.display_name
+
+
+class SzfbStandingZone(models.Model):
+    KIND_PLAYOFF = "playoff"
+    KIND_BARAGE = "barage"
+    KIND_RELEGATION = "relegation"
+
+    KIND_CHOICES = [
+        (KIND_PLAYOFF, "Play-off"),
+        (KIND_BARAGE, "Baráž"),
+        (KIND_RELEGATION, "Zostup"),
+    ]
+
+    competition = models.ForeignKey(
+        SzfbCompetition,
+        on_delete=models.CASCADE,
+        related_name="standing_zones",
+    )
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    label = models.CharField(max_length=100)
+    start_position = models.PositiveIntegerField()
+    end_position = models.PositiveIntegerField()
+    display_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["display_order", "start_position", "id"]
+
+    def __str__(self):
+        return (
+            f"{self.competition}: {self.label} "
+            f"({self.start_position}-{self.end_position})"
+        )
 
 
 class SzfbTeamWatch(models.Model):
@@ -300,7 +410,25 @@ class SzfbMatch(models.Model):
 
     opponent = models.CharField(max_length=255)
     venue = models.CharField(max_length=255, blank=True, default="")
+    DECISION_REGULATION = "regulation"
+    DECISION_OVERTIME = "overtime"
+    DECISION_SHOOTOUT = "shootout"
+    DECISION_UNKNOWN = "unknown"
+
+    DECISION_TYPE_CHOICES = [
+        (DECISION_REGULATION, "Riadny čas"),
+        (DECISION_OVERTIME, "Predĺženie"),
+        (DECISION_SHOOTOUT, "Samostatné nájazdy"),
+        (DECISION_UNKNOWN, "Neznáme"),
+    ]
+
     result = models.CharField(max_length=30, blank=True, default="")
+    decision_type = models.CharField(
+        max_length=20,
+        choices=DECISION_TYPE_CHOICES,
+        blank=True,
+        default="",
+    )
     is_home = models.BooleanField(null=True, blank=True)
 
     external_key = models.CharField(max_length=255, unique=True)
@@ -332,6 +460,12 @@ class SzfbMatchHistory(models.Model):
     opponent = models.CharField(max_length=255)
     venue = models.CharField(max_length=255, blank=True, default="")
     result = models.CharField(max_length=30)
+    decision_type = models.CharField(
+        max_length=20,
+        choices=SzfbMatch.DECISION_TYPE_CHOICES,
+        blank=True,
+        default="",
+    )
     is_home = models.BooleanField(null=True, blank=True)
     external_key = models.CharField(max_length=255)
 

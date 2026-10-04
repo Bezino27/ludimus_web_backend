@@ -14,6 +14,8 @@ from .models import (
     SzfbCompetition,
     SzfbGoalieStat,
     SzfbStandingRow,
+    SzfbStandingZone,
+    SzfbTeamBrand,
     SzfbTeamWatch,
     SzfbMatch,
     SzfbMatchHistory,
@@ -117,6 +119,22 @@ class SzfbWatchAutoSyncConfigAdmin(admin.ModelAdmin):
     )
 
 
+@admin.register(SzfbStandingZone)
+class SzfbStandingZoneAdmin(admin.ModelAdmin):
+    list_display = (
+        "competition",
+        "label",
+        "kind",
+        "start_position",
+        "end_position",
+        "display_order",
+        "is_active",
+    )
+    list_filter = ("competition", "kind", "is_active")
+    search_fields = ("competition__name", "label")
+    ordering = ("competition", "display_order", "start_position")
+
+
 @admin.register(SzfbStandingRow)
 class SzfbStandingRowAdmin(admin.ModelAdmin):
     list_display = (
@@ -124,6 +142,8 @@ class SzfbStandingRowAdmin(admin.ModelAdmin):
         "position",
         "team_name",
         "played",
+        "goals_for",
+        "goals_against",
         "points",
     )
     list_filter = (
@@ -132,6 +152,37 @@ class SzfbStandingRowAdmin(admin.ModelAdmin):
     search_fields = (
         "team_name",
     )
+
+
+@admin.register(SzfbTeamBrand)
+class SzfbTeamBrandAdmin(admin.ModelAdmin):
+    list_display = (
+        "club",
+        "display_name",
+        "match_key",
+        "normalized_match_key",
+        "is_active",
+        "updated_at",
+    )
+    list_filter = (
+        "club",
+        "is_active",
+    )
+    search_fields = (
+        "display_name",
+        "match_key",
+        "normalized_match_key",
+    )
+    readonly_fields = (
+        "normalized_match_key",
+        "created_at",
+        "updated_at",
+    )
+    ordering = (
+        "club",
+        "display_name",
+    )
+
 
 
 @admin.register(SzfbTeamWatch)
@@ -182,6 +233,7 @@ class SzfbMatchAdmin(admin.ModelAdmin):
         "match_time",
         "opponent",
         "result",
+        "decision_type",
         "venue",
         "is_home",
     )
@@ -206,6 +258,7 @@ class SzfbMatchHistoryAdmin(admin.ModelAdmin):
         "match_time",
         "opponent",
         "result",
+        "decision_type",
         "is_home",
     )
     list_filter = (
@@ -235,6 +288,7 @@ class SzfbMatchHistoryAdmin(admin.ModelAdmin):
         "opponent",
         "venue",
         "result",
+        "decision_type",
         "is_home",
         "external_key",
         "created_at",

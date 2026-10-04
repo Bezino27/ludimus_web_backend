@@ -12,25 +12,99 @@ from apps.scraper.models import (
     SzfbWatchAutoSyncConfig,
     SzfbPlayerStat,
     SzfbStandingRow,
+    SzfbStandingZone,
+    SzfbTeamBrand,
     SzfbTeamWatch,
     build_club_player_identity_key,
     normalize_player_name,
+    normalize_team_match_key,
 )
 from apps.scraper.services.szfb_scraper import format_player_name
+from apps.scraper.services.team_branding import resolve_team_brand
 
 
-class SzfbStandingRowSerializer(serializers.ModelSerializer):
+class SzfbTeamBrandSerializer(serializers.ModelSerializer):
+    logo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SzfbTeamBrand
+        fields = [
+            "id",
+            "display_name",
+            "match_key",
+            "normalized_match_key",
+            "logo_url",
+            "shadow_color",
+            "use_shadow_color",
+            "is_active",
+        ]
+
+    def get_logo_url(self, obj):
+        if not obj.logo:
+            return None
+
+        try:
+            logo_url = obj.logo.url
+        except (OSError, ValueError):
+            return None
+
+        request = self.context.get("request")
+        if request:
+            try:
+                return request.build_absolute_uri(logo_url)
+            except Exception:
+                return None
+
+        return logo_url
+
+
+class TeamBrandResolvedMixin:
+    def get_resolved_team_brand(self, team_name):
+        brands = self.context.get("team_brands") or []
+        brand = resolve_team_brand(team_name, brands)
+
+        if not brand:
+            return None
+
+        return SzfbTeamBrandSerializer(
+            brand,
+            context=self.context,
+        ).data
+
+
+class SzfbStandingRowSerializer(TeamBrandResolvedMixin, serializers.ModelSerializer):
+    score = serializers.SerializerMethodField()
+    team_brand = serializers.SerializerMethodField()
+
+    def get_score(self, obj):
+        if obj.goals_for is None or obj.goals_against is None:
+            return None
+
+        return f"{obj.goals_for}:{obj.goals_against}"
+
+    def get_team_brand(self, obj):
+        return self.get_resolved_team_brand(obj.team_name)
+
     class Meta:
         model = SzfbStandingRow
         fields = [
             "position",
             "team_name",
+            "team_brand",
             "played",
+            "goals_for",
+            "goals_against",
+            "score",
             "points",
         ]
 
 
-class SzfbMatchSerializer(serializers.ModelSerializer):
+class SzfbMatchSerializer(TeamBrandResolvedMixin, serializers.ModelSerializer):
+    opponent_brand = serializers.SerializerMethodField()
+
+    def get_opponent_brand(self, obj):
+        return self.get_resolved_team_brand(obj.opponent)
+
     class Meta:
         model = SzfbMatch
         fields = [
@@ -39,14 +113,17 @@ class SzfbMatchSerializer(serializers.ModelSerializer):
             "match_date",
             "match_time",
             "opponent",
+            "opponent_brand",
             "venue",
             "result",
+            "decision_type",
             "is_home",
         ]
 
 
-class SzfbMatchHistorySerializer(serializers.ModelSerializer):
+class SzfbMatchHistorySerializer(TeamBrandResolvedMixin, serializers.ModelSerializer):
     match_type = serializers.SerializerMethodField()
+    opponent_brand = serializers.SerializerMethodField()
 
     class Meta:
         model = SzfbMatchHistory
@@ -56,18 +133,159 @@ class SzfbMatchHistorySerializer(serializers.ModelSerializer):
             "match_date",
             "match_time",
             "opponent",
+            "opponent_brand",
             "venue",
             "result",
+            "decision_type",
             "is_home",
         ]
 
     def get_match_type(self, _obj):
         return "finished"
 
+    def get_opponent_brand(self, obj):
+        return self.get_resolved_team_brand(obj.opponent)
 
-class SzfbTeamWatchSerializer(serializers.ModelSerializer):
+
+class AdminSzfbTeamBrandWriteSerializer(serializers.Serializer):
+    display_name = serializers.CharField(required=False, max_length=255)
+    match_key = serializers.CharField(required=False, max_length=255)
+    logo = serializers.ImageField(required=False, allow_null=True)
+    clear_logo = serializers.BooleanField(required=False, default=False)
+    shadow_color = serializers.RegexField(
+        regex=r"^#[0-9A-Fa-f]{6}$",
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        error_messages={
+            "invalid": "Farba musí byť HEX hodnota vo formáte #RRGGBB."
+        },
+    )
+    use_shadow_color = serializers.BooleanField(required=False)
+    is_active = serializers.BooleanField(required=False)
+
+    def validate(self, attrs):
+        club = self.context.get("club")
+        instance = getattr(self, "instance", None)
+
+        if not club:
+            raise serializers.ValidationError(
+                {"club": "Klub nie je dostupný pre správu brandingu."}
+            )
+
+        display_name = attrs.get(
+            "display_name",
+            getattr(instance, "display_name", ""),
+        ).strip()
+        match_key = attrs.get(
+            "match_key",
+            getattr(instance, "match_key", ""),
+        ).strip()
+        normalized_match_key = normalize_team_match_key(match_key)
+
+        if not display_name:
+            raise serializers.ValidationError(
+                {"display_name": "Zobrazovaný názov je povinný."}
+            )
+
+        if not normalized_match_key:
+            raise serializers.ValidationError(
+                {"match_key": "Rozpoznávací názov je povinný."}
+            )
+
+        duplicate = SzfbTeamBrand.objects.filter(
+            club=club,
+            normalized_match_key=normalized_match_key,
+        )
+        if instance:
+            duplicate = duplicate.exclude(id=instance.id)
+
+        if duplicate.exists():
+            raise serializers.ValidationError(
+                {
+                    "match_key": (
+                        "Tento rozpoznávací názov už používa iný tím v klube."
+                    )
+                }
+            )
+
+        attrs["display_name"] = display_name
+        attrs["match_key"] = match_key
+        if "shadow_color" in attrs:
+            attrs["shadow_color"] = (
+                attrs["shadow_color"].upper() if attrs["shadow_color"] else None
+            )
+        use_shadow_color = attrs.get(
+            "use_shadow_color",
+            getattr(instance, "use_shadow_color", False),
+        )
+        shadow_color = attrs.get(
+            "shadow_color",
+            getattr(instance, "shadow_color", None),
+        )
+        if use_shadow_color and not shadow_color:
+            raise serializers.ValidationError(
+                {
+                    "shadow_color": (
+                        "Pre vynútenie manuálnej farby najprv vyber HEX farbu."
+                    )
+                }
+            )
+        return attrs
+
+    def create(self, validated_data):
+        club = self.context["club"]
+        validated_data.pop("clear_logo", None)
+        return SzfbTeamBrand.objects.create(club=club, **validated_data)
+
+    def update(self, instance, validated_data):
+        clear_logo = validated_data.pop("clear_logo", False)
+        next_logo = validated_data.pop("logo", serializers.empty)
+
+        if clear_logo and instance.logo:
+            instance.logo.delete(save=False)
+            instance.logo = None
+
+        if next_logo is not serializers.empty:
+            if instance.logo:
+                instance.logo.delete(save=False)
+            instance.logo = next_logo
+
+        for field_name in [
+            "display_name",
+            "match_key",
+            "shadow_color",
+            "use_shadow_color",
+            "is_active",
+        ]:
+            if field_name in validated_data:
+                setattr(instance, field_name, validated_data[field_name])
+
+        instance.save()
+        return instance
+
+
+class SzfbStandingZoneSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SzfbStandingZone
+        fields = [
+            "id",
+            "kind",
+            "label",
+            "start_position",
+            "end_position",
+            "display_order",
+            "is_active",
+        ]
+
+
+class SzfbTeamWatchSerializer(TeamBrandResolvedMixin, serializers.ModelSerializer):
     competition_name = serializers.CharField(source="competition.name", read_only=True)
     competition_season = serializers.CharField(source="competition.season", read_only=True)
+    team_brand = serializers.SerializerMethodField()
+
+    def get_team_brand(self, obj):
+        return self.get_resolved_team_brand(obj.team_name)
 
     class Meta:
         model = SzfbTeamWatch
@@ -75,6 +293,7 @@ class SzfbTeamWatchSerializer(serializers.ModelSerializer):
             "id",
             "label",
             "team_name",
+            "team_brand",
             "competition_name",
             "competition_season",
         ]
@@ -310,19 +529,40 @@ class SzfbTeamWatchAdminSerializer(serializers.ModelSerializer):
         ]
 
 
-class AdminSzfbStandingRowSerializer(serializers.ModelSerializer):
+class AdminSzfbStandingRowSerializer(TeamBrandResolvedMixin, serializers.ModelSerializer):
+    score = serializers.SerializerMethodField()
+    team_brand = serializers.SerializerMethodField()
+
+    def get_score(self, obj):
+        if obj.goals_for is None or obj.goals_against is None:
+            return None
+
+        return f"{obj.goals_for}:{obj.goals_against}"
+
+    def get_team_brand(self, obj):
+        return self.get_resolved_team_brand(obj.team_name)
+
     class Meta:
         model = SzfbStandingRow
         fields = [
             "id",
             "position",
             "team_name",
+            "team_brand",
             "played",
+            "goals_for",
+            "goals_against",
+            "score",
             "points",
         ]
 
 
-class AdminSzfbMatchSerializer(serializers.ModelSerializer):
+class AdminSzfbMatchSerializer(TeamBrandResolvedMixin, serializers.ModelSerializer):
+    opponent_brand = serializers.SerializerMethodField()
+
+    def get_opponent_brand(self, obj):
+        return self.get_resolved_team_brand(obj.opponent)
+
     class Meta:
         model = SzfbMatch
         fields = [
@@ -331,8 +571,10 @@ class AdminSzfbMatchSerializer(serializers.ModelSerializer):
             "match_date",
             "match_time",
             "opponent",
+            "opponent_brand",
             "venue",
             "result",
+            "decision_type",
             "is_home",
         ]
 

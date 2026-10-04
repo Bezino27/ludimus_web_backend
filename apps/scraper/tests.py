@@ -6,6 +6,7 @@ from io import StringIO
 
 from django.contrib import admin
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.core.management import call_command
 from django.test import TestCase
@@ -22,6 +23,7 @@ from apps.scraper.models import (
     SzfbMatchHistory,
     SzfbPlayerStat,
     SzfbStandingRow,
+    SzfbTeamBrand,
     SzfbTeamWatch,
     SzfbWatchAutoSyncConfig,
 )
@@ -50,6 +52,10 @@ from apps.scraper.services.szfb_sync import (
 from apps.scraper.services.szfb_match_history import (
     get_match_history_for_watch,
     persist_finished_match_history,
+)
+from apps.scraper.serializers import (
+    AdminSzfbTeamBrandWriteSerializer,
+    SzfbTeamBrandSerializer,
 )
 from apps.teams.models import Category
 
@@ -91,6 +97,86 @@ class SzfbRevalidationTestMixin:
             birth_year_to=2010,
             szfb_team_watch=watch or self.watch,
         )
+
+
+class SzfbTeamBrandShadowColorTests(TestCase):
+    def setUp(self):
+        self.club = Club.objects.create(name="ATU Košice", slug="atu-kosice")
+
+    def create_brand(self, **overrides):
+        values = {
+            "club": self.club,
+            "display_name": "Testovací tím",
+            "match_key": "testovaci tim",
+        }
+        values.update(overrides)
+        return SzfbTeamBrand.objects.create(**values)
+
+    def test_model_accepts_nullable_hex_shadow_color_and_rejects_invalid_value(self):
+        brand = self.create_brand(shadow_color=None)
+        brand.full_clean()
+
+        brand.shadow_color = "#12AbEf"
+        brand.full_clean()
+
+        brand.shadow_color = "12ABEF"
+        with self.assertRaises(ValidationError):
+            brand.full_clean()
+
+    def test_write_and_read_serializers_support_setting_and_clearing_shadow_color(self):
+        serializer = AdminSzfbTeamBrandWriteSerializer(
+            data={
+                "display_name": "Testovací tím",
+                "match_key": "testovaci tim",
+                "shadow_color": "#12abef",
+                "use_shadow_color": True,
+            },
+            context={"club": self.club},
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        brand = serializer.save()
+        self.assertEqual(brand.shadow_color, "#12ABEF")
+        self.assertTrue(brand.use_shadow_color)
+        self.assertEqual(
+            SzfbTeamBrandSerializer(brand).data["shadow_color"],
+            "#12ABEF",
+        )
+
+        clear_serializer = AdminSzfbTeamBrandWriteSerializer(
+            brand,
+            data={"shadow_color": "", "use_shadow_color": False},
+            partial=True,
+            context={"club": self.club},
+        )
+        self.assertTrue(clear_serializer.is_valid(), clear_serializer.errors)
+        clear_serializer.save()
+        brand.refresh_from_db()
+        self.assertIsNone(brand.shadow_color)
+
+    def test_manual_color_override_requires_shadow_color(self):
+        serializer = AdminSzfbTeamBrandWriteSerializer(
+            data={
+                "display_name": "Testovací tím",
+                "match_key": "testovaci tim",
+                "use_shadow_color": True,
+            },
+            context={"club": self.club},
+        )
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("shadow_color", serializer.errors)
+
+    def test_partial_update_preserves_shadow_color_when_field_is_omitted(self):
+        brand = self.create_brand(shadow_color="#334455")
+        serializer = AdminSzfbTeamBrandWriteSerializer(
+            brand,
+            data={"display_name": "Nový názov"},
+            partial=True,
+            context={"club": self.club},
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        serializer.save()
+        brand.refresh_from_db()
+        self.assertEqual(brand.shadow_color, "#334455")
 
 
 class SzfbStandingRowConstraintTests(TestCase):
@@ -368,6 +454,13 @@ class SzfbMatchHistoryTests(SzfbRevalidationTestMixin, TestCase):
         extract_competition_info,
         fetch_matches,
     ):
+        brand = SzfbTeamBrand.objects.create(
+            club=self.club,
+            display_name="Súper",
+            match_key="super",
+            shadow_color="#445566",
+            use_shadow_color=True,
+        )
         self.watch.competitor_id = None
         self.watch.save(update_fields=["competitor_id"])
         extract_competition_info.return_value = {
@@ -396,6 +489,9 @@ class SzfbMatchHistoryTests(SzfbRevalidationTestMixin, TestCase):
         )
 
         self.assertEqual(SzfbMatchHistory.objects.count(), 1)
+        brand.refresh_from_db()
+        self.assertEqual(brand.shadow_color, "#445566")
+        self.assertTrue(brand.use_shadow_color)
 
 
 class SzfbDashboardHistoricalResultsTests(SzfbRevalidationTestMixin, TestCase):
