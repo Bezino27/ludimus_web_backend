@@ -2,6 +2,7 @@ from datetime import datetime, time as datetime_time, timedelta
 import re
 import unicodedata
 
+from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
@@ -14,19 +15,6 @@ def normalize_player_name(value: str) -> str:
     value = value.lower()
     value = re.sub(r"\s+", " ", value)
     return value.strip()
-
-
-def normalize_team_match_key(value: str) -> str:
-    """
-    Normalizuje ručne nastaviteľný kľúč tímu pre branding/logo resolver.
-    Kľúč je nezávislý od sezóny a SZFB competitor_id.
-    """
-    value = value or ""
-    value = unicodedata.normalize("NFKD", value)
-    value = value.encode("ascii", "ignore").decode("ascii")
-    value = value.lower()
-    value = re.sub(r"[^a-z0-9]+", " ", value)
-    return re.sub(r"\s+", " ", value).strip()
 
 
 def build_club_player_identity_key(full_name: str, birth_year) -> str:
@@ -82,6 +70,7 @@ class SzfbStandingRow(models.Model):
     )
     position = models.PositiveIntegerField()
     team_name = models.CharField(max_length=255)
+    szfb_competitor_id = models.PositiveIntegerField(null=True, blank=True)
     played = models.PositiveIntegerField(default=0)
     goals_for = models.PositiveIntegerField(null=True, blank=True)
     goals_against = models.PositiveIntegerField(null=True, blank=True)
@@ -99,17 +88,29 @@ class SzfbTeamBrand(models.Model):
     """
     Persistentný branding tímu v rámci Ludimus klubu.
 
-    Nie je naviazaný na súťaž, sezónu ani competitor_id, takže jedno logo
-    môže používať mužský aj juniorský watch a sync ho nikdy nevymaže.
+    Reprezentuje konkrétnu SZFB tímovú identitu v rámci Ludimus klubu.
+    Názov pochádza priamo zo SZFB; vizuál môže byť vlastný alebo explicitne
+    zdieľaný z iného záznamu toho istého klubu.
     """
     club = models.ForeignKey(
         "clubs.Club",
         on_delete=models.CASCADE,
         related_name="szfb_team_brands",
     )
-    display_name = models.CharField(max_length=255)
-    match_key = models.CharField(max_length=255)
-    normalized_match_key = models.CharField(max_length=255, db_index=True)
+    competition = models.ForeignKey(
+        SzfbCompetition,
+        on_delete=models.CASCADE,
+        related_name="team_brands",
+    )
+    team_name = models.CharField(max_length=255)
+    szfb_competitor_id = models.PositiveIntegerField(null=True, blank=True)
+    branding_source = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        related_name="branding_dependents",
+        null=True,
+        blank=True,
+    )
     logo = models.ImageField(
         upload_to="teams/logos/",
         null=True,
@@ -140,20 +141,57 @@ class SzfbTeamBrand(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["display_name"]
+        ordering = ["team_name"]
         constraints = [
             models.UniqueConstraint(
-                fields=["club", "normalized_match_key"],
-                name="unique_szfb_team_brand_match_key_per_club",
-            )
+                fields=["club", "competition", "team_name"],
+                name="unique_szfb_team_brand_name_per_competition",
+            ),
+            models.UniqueConstraint(
+                fields=["club", "competition", "szfb_competitor_id"],
+                condition=models.Q(szfb_competitor_id__isnull=False),
+                name="unique_szfb_team_brand_competitor_per_competition",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(id=models.F("branding_source_id")),
+                name="prevent_szfb_team_brand_self_link",
+            ),
         ]
 
-    def save(self, *args, **kwargs):
-        self.normalized_match_key = normalize_team_match_key(self.match_key)
-        super().save(*args, **kwargs)
+    def clean(self):
+        super().clean()
+        if not self.branding_source_id:
+            return
+
+        if self.pk and self.branding_source_id == self.pk:
+            raise ValidationError(
+                {"branding_source": "Tím nemôže prepojiť branding sám na seba."}
+            )
+        if self.branding_source.club_id != self.club_id:
+            raise ValidationError(
+                {"branding_source": "Zdroj brandingu musí patriť rovnakému klubu."}
+            )
+
+        visited = {self.pk} if self.pk else set()
+        source = self.branding_source
+        while source:
+            if source.pk in visited:
+                raise ValidationError(
+                    {"branding_source": "Prepojenie brandingu nesmie vytvoriť cyklus."}
+                )
+            visited.add(source.pk)
+            source = source.branding_source
+
+    def get_resolved_branding(self):
+        source = self
+        visited = set()
+        while source.branding_source_id and source.pk not in visited:
+            visited.add(source.pk)
+            source = source.branding_source
+        return source
 
     def __str__(self):
-        return self.display_name
+        return self.team_name
 
 
 class SzfbStandingZone(models.Model):

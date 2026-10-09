@@ -55,7 +55,10 @@ from apps.scraper.services.szfb_match_history import (
     get_match_history_for_watch,
     get_recent_form_for_watch,
 )
-from apps.scraper.services.team_branding import get_club_team_brands
+from apps.scraper.services.team_branding import (
+    delete_team_brand_logo_if_unreferenced,
+    get_club_team_brands,
+)
 from apps.common.revalidation import schedule_revalidation
 from apps.scraper.revalidation import (
     get_player_revalidation_paths,
@@ -750,8 +753,12 @@ class AdminSzfbTeamBrandListCreateView(APIView):
             request,
             request.query_params.get("club", ""),
         )
-        brands = SzfbTeamBrand.objects.filter(club=club).order_by(
-            "display_name",
+        brands = SzfbTeamBrand.objects.filter(club=club).select_related(
+            "competition",
+            "branding_source__competition",
+            "branding_source__branding_source",
+        ).order_by(
+            "team_name",
             "id",
         )
         return Response(
@@ -812,7 +819,12 @@ class AdminSzfbTeamBrandDetailView(APIView):
         )
         club = get_editor_club_or_404(request, club_slug)
         brand = get_object_or_404(
-            SzfbTeamBrand.objects.select_related("club"),
+            SzfbTeamBrand.objects.select_related(
+                "club",
+                "competition",
+                "branding_source__competition",
+                "branding_source__branding_source",
+            ),
             id=brand_id,
             club=club,
         )
@@ -854,8 +866,7 @@ class AdminSzfbTeamBrandDetailView(APIView):
 
     def delete(self, request, brand_id):
         club, brand = self.get_brand(request, brand_id)
-        if brand.logo:
-            brand.logo.delete(save=False)
+        delete_team_brand_logo_if_unreferenced(brand)
         brand.delete()
 
         schedule_team_brand_revalidation(

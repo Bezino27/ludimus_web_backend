@@ -1,70 +1,116 @@
 from collections.abc import Iterable
 
-from apps.scraper.models import SzfbTeamBrand, normalize_team_match_key
+from django.db import IntegrityError, transaction
+
+from apps.scraper.models import SzfbTeamBrand
 
 
-def _contains_match_key(normalized_team_name: str, normalized_match_key: str) -> bool:
-    if not normalized_team_name or not normalized_match_key:
-        return False
+def delete_team_brand_logo_if_unreferenced(brand: SzfbTeamBrand):
+    """Odstráni súbor iba ak ho nepoužíva competition-scoped klon."""
+    if not brand.logo:
+        return
+    logo_name = brand.logo.name
+    if SzfbTeamBrand.objects.exclude(pk=brand.pk).filter(logo=logo_name).exists():
+        return
+    brand.logo.delete(save=False)
 
-    haystack = f" {normalized_team_name} "
-    needle = f" {normalized_match_key} "
-    return needle in haystack
 
-
-def resolve_team_brand(team_name: str, brands: Iterable[SzfbTeamBrand]):
+def resolve_team_brand(
+    team_name: str,
+    brands: Iterable[SzfbTeamBrand],
+    competition_id: int | None = None,
+    szfb_competitor_id: int | None = None,
+    szfb_competition_id: int | None = None,
+):
     """
-    Nájde persistentný branding tímu podľa názvu zo SZFB.
-
-    Priorita:
-    1. presná zhoda normalizovaného display_name,
-    2. najdlhší zodpovedajúci match_key,
-    3. pri nejednoznačnej zhode rovnakou dĺžkou vráti None.
+    Nájde konkrétnu tímovú identitu bez fuzzy textového matchingu.
+    Vyhľadávanie je vždy obmedzené na konkrétnu súťaž. Competitor ID je
+    stabilný identifikátor iba v jej rámci; presný názov je bezpečný fallback.
     """
-    normalized_team_name = normalize_team_match_key(team_name)
-
-    if not normalized_team_name:
+    if not team_name:
         return None
 
-    active_brands = [brand for brand in brands if brand.is_active]
-
-    exact_matches = [
+    active_brands = [
         brand
-        for brand in active_brands
-        if normalize_team_match_key(brand.display_name) == normalized_team_name
-    ]
-
-    if len(exact_matches) == 1:
-        return exact_matches[0]
-
-    candidates = [
-        brand
-        for brand in active_brands
-        if _contains_match_key(
-            normalized_team_name,
-            brand.normalized_match_key,
+        for brand in brands
+        if brand.is_active
+        and (competition_id is None or brand.competition_id == competition_id)
+        and (
+            szfb_competition_id is None
+            or brand.competition.szfb_competition_id == szfb_competition_id
         )
     ]
+    if szfb_competitor_id is not None:
+        id_match = next(
+            (
+                brand
+                for brand in active_brands
+                if brand.szfb_competitor_id == szfb_competitor_id
+            ),
+            None,
+        )
+        if id_match:
+            return id_match
 
-    if not candidates:
-        return None
-
-    candidates.sort(
-        key=lambda brand: len(brand.normalized_match_key),
-        reverse=True,
-    )
-
-    longest_length = len(candidates[0].normalized_match_key)
-    longest_matches = [
-        brand
-        for brand in candidates
-        if len(brand.normalized_match_key) == longest_length
+    exact_name_matches = [
+        brand for brand in active_brands if brand.team_name == team_name
     ]
+    return exact_name_matches[0] if len(exact_name_matches) == 1 else None
 
-    if len(longest_matches) != 1:
+
+def sync_team_brand_identity(club, competition, team_name, szfb_competitor_id=None):
+    """Upsertne SZFB identitu bez zásahu do manuálnych vizuálov/linku."""
+    if not club or not competition or not team_name:
         return None
 
-    return longest_matches[0]
+    brand = None
+    if szfb_competitor_id is not None:
+        brand = SzfbTeamBrand.objects.filter(
+            club=club,
+            competition=competition,
+            szfb_competitor_id=szfb_competitor_id,
+        ).first()
+
+    if brand is None:
+        brand = SzfbTeamBrand.objects.filter(
+            club=club,
+            competition=competition,
+            team_name=team_name,
+        ).first()
+
+    if brand is None:
+        try:
+            with transaction.atomic():
+                return SzfbTeamBrand.objects.create(
+                    club=club,
+                    competition=competition,
+                    team_name=team_name,
+                    szfb_competitor_id=szfb_competitor_id,
+                )
+        except IntegrityError:
+            if szfb_competitor_id is not None:
+                return SzfbTeamBrand.objects.get(
+                    club=club,
+                    competition=competition,
+                    szfb_competitor_id=szfb_competitor_id,
+                )
+            return SzfbTeamBrand.objects.get(
+                club=club,
+                competition=competition,
+                team_name=team_name,
+            )
+
+    changed_fields = []
+    if brand.team_name != team_name:
+        brand.team_name = team_name
+        changed_fields.append("team_name")
+    if szfb_competitor_id is not None and brand.szfb_competitor_id is None:
+        brand.szfb_competitor_id = szfb_competitor_id
+        changed_fields.append("szfb_competitor_id")
+    if changed_fields:
+        changed_fields.append("updated_at")
+        brand.save(update_fields=changed_fields)
+    return brand
 
 
 def get_club_team_brands(club):
@@ -75,5 +121,11 @@ def get_club_team_brands(club):
         SzfbTeamBrand.objects.filter(
             club=club,
             is_active=True,
-        ).order_by("-updated_at", "display_name")
+        ).select_related(
+            "competition",
+            "branding_source__competition",
+            "branding_source__branding_source",
+        ).order_by(
+            "-updated_at", "team_name"
+        )
     )

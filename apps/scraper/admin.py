@@ -158,29 +158,30 @@ class SzfbStandingRowAdmin(admin.ModelAdmin):
 class SzfbTeamBrandAdmin(admin.ModelAdmin):
     list_display = (
         "club",
-        "display_name",
-        "match_key",
-        "normalized_match_key",
+        "competition",
+        "team_name",
+        "szfb_competitor_id",
+        "branding_source",
         "is_active",
         "updated_at",
     )
     list_filter = (
         "club",
+        "competition",
         "is_active",
     )
     search_fields = (
-        "display_name",
-        "match_key",
-        "normalized_match_key",
+        "team_name",
+        "competition__name",
+        "szfb_competitor_id",
     )
     readonly_fields = (
-        "normalized_match_key",
         "created_at",
         "updated_at",
     )
     ordering = (
         "club",
-        "display_name",
+        "team_name",
     )
 
 

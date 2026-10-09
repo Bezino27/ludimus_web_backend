@@ -14,6 +14,7 @@ from apps.scraper.models import (
     normalize_player_name,
 )
 from apps.scraper.services.szfb_match_history import persist_finished_match_history
+from apps.scraper.services.team_branding import sync_team_brand_identity
 from apps.scraper.services.szfb_scraper import (
     build_team_player_stats_url,
     extract_competition_info,
@@ -243,6 +244,17 @@ def sync_competition_from_home_url(
         if data["results_url"]
         else None
     )
+    standing_names_by_competitor = {
+        row.get("szfb_competitor_id"): row["team_name"]
+        for row in standings or []
+        if row.get("szfb_competitor_id") is not None
+    }
+    renamed_watch_names = {}
+    for watch in watches:
+        synced_team_name = standing_names_by_competitor.get(watch.competitor_id)
+        if synced_team_name and synced_team_name != watch.team_name:
+            watch.team_name = synced_team_name
+            renamed_watch_names[watch.id] = synced_team_name
     watch_payloads = {}
 
     for watch in watches:
@@ -300,6 +312,7 @@ def sync_competition_from_home_url(
                         competition=competition,
                         position=row["position"],
                         team_name=row["team_name"],
+                        szfb_competitor_id=row.get("szfb_competitor_id"),
                         played=row["played"],
                         goals_for=row["goals_for"],
                         goals_against=row["goals_against"],
@@ -308,6 +321,15 @@ def sync_competition_from_home_url(
                     for row in standings
                 ]
             )
+            clubs = {watch.club for watch in watches if watch.club_id}
+            for club in clubs:
+                for row in standings:
+                    sync_team_brand_identity(
+                        club,
+                        competition,
+                        row["team_name"],
+                        row.get("szfb_competitor_id"),
+                    )
 
         locked_watches = {
             watch.id: watch
@@ -316,6 +338,9 @@ def sync_competition_from_home_url(
         }
         for watch_id, payload in watch_payloads.items():
             watch = locked_watches[watch_id]
+            if watch_id in renamed_watch_names:
+                watch.team_name = renamed_watch_names[watch_id]
+                watch.save(update_fields=["team_name"])
             if payload["matches"] is not None:
                 watch.matches.all().delete()
                 SzfbMatch.objects.bulk_create(

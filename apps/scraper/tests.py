@@ -53,6 +53,10 @@ from apps.scraper.services.szfb_match_history import (
     get_match_history_for_watch,
     persist_finished_match_history,
 )
+from apps.scraper.services.team_branding import (
+    resolve_team_brand,
+    sync_team_brand_identity,
+)
 from apps.scraper.serializers import (
     AdminSzfbTeamBrandWriteSerializer,
     SzfbTeamBrandSerializer,
@@ -102,12 +106,22 @@ class SzfbRevalidationTestMixin:
 class SzfbTeamBrandShadowColorTests(TestCase):
     def setUp(self):
         self.club = Club.objects.create(name="ATU Košice", slug="atu-kosice")
+        self.competition = SzfbCompetition.objects.create(
+            szfb_competition_id=901,
+            name="Testovacia súťaž",
+        )
+        SzfbTeamWatch.objects.create(
+            label="Test",
+            competition=self.competition,
+            club=self.club,
+            team_name="Testovací tím",
+        )
 
     def create_brand(self, **overrides):
         values = {
             "club": self.club,
-            "display_name": "Testovací tím",
-            "match_key": "testovaci tim",
+            "competition": self.competition,
+            "team_name": "Testovací tím",
         }
         values.update(overrides)
         return SzfbTeamBrand.objects.create(**values)
@@ -126,8 +140,8 @@ class SzfbTeamBrandShadowColorTests(TestCase):
     def test_write_and_read_serializers_support_setting_and_clearing_shadow_color(self):
         serializer = AdminSzfbTeamBrandWriteSerializer(
             data={
-                "display_name": "Testovací tím",
-                "match_key": "testovaci tim",
+                "team_name": "Testovací tím",
+                "competition": self.competition.id,
                 "shadow_color": "#12abef",
                 "use_shadow_color": True,
             },
@@ -156,8 +170,8 @@ class SzfbTeamBrandShadowColorTests(TestCase):
     def test_manual_color_override_requires_shadow_color(self):
         serializer = AdminSzfbTeamBrandWriteSerializer(
             data={
-                "display_name": "Testovací tím",
-                "match_key": "testovaci tim",
+                "team_name": "Testovací tím",
+                "competition": self.competition.id,
                 "use_shadow_color": True,
             },
             context={"club": self.club},
@@ -169,7 +183,7 @@ class SzfbTeamBrandShadowColorTests(TestCase):
         brand = self.create_brand(shadow_color="#334455")
         serializer = AdminSzfbTeamBrandWriteSerializer(
             brand,
-            data={"display_name": "Nový názov"},
+            data={"is_active": False},
             partial=True,
             context={"club": self.club},
         )
@@ -177,6 +191,332 @@ class SzfbTeamBrandShadowColorTests(TestCase):
         serializer.save()
         brand.refresh_from_db()
         self.assertEqual(brand.shadow_color, "#334455")
+
+
+class SzfbTeamBrandLinkTests(TestCase):
+    def setUp(self):
+        self.club = Club.objects.create(name="ATU Košice", slug="atu-kosice")
+        self.mens_competition = SzfbCompetition.objects.create(
+            szfb_competition_id=701,
+            name="Florbalová extraliga mužov",
+        )
+        self.junior_competition = SzfbCompetition.objects.create(
+            szfb_competition_id=702,
+            name="Macron Extraliga juniorov",
+        )
+        SzfbTeamWatch.objects.create(
+            label="Muži",
+            competition=self.mens_competition,
+            club=self.club,
+            team_name="FaBK ATU Košice",
+        )
+        SzfbTeamWatch.objects.create(
+            label="Juniori",
+            competition=self.junior_competition,
+            club=self.club,
+            team_name="FaBK ATU Košice",
+        )
+        self.source = SzfbTeamBrand.objects.create(
+            club=self.club,
+            competition=self.mens_competition,
+            team_name="ŠK LIDO Prírodovedec Ružinov",
+            szfb_competitor_id=101,
+            logo="teams/logos/lido.png",
+            shadow_color="#123456",
+            use_shadow_color=True,
+        )
+        self.juniors = SzfbTeamBrand.objects.create(
+            club=self.club,
+            competition=self.junior_competition,
+            team_name="ŠK LIDO Alfa Business Partnership Prírodovedec Ružinov",
+            szfb_competitor_id=202,
+            logo="teams/logos/juniori.png",
+            shadow_color="#ABCDEF",
+            use_shadow_color=True,
+            branding_source=self.source,
+        )
+
+    def test_different_names_share_resolved_logo_and_color(self):
+        source_data = SzfbTeamBrandSerializer(self.source).data
+        junior_data = SzfbTeamBrandSerializer(self.juniors).data
+
+        self.assertNotEqual(source_data["team_name"], junior_data["team_name"])
+        self.assertEqual(source_data["logo_url"], junior_data["logo_url"])
+        self.assertEqual(source_data["shadow_color"], junior_data["shadow_color"])
+
+    def test_identity_sync_updates_exact_name_without_removing_branding_link(self):
+        updated = sync_team_brand_identity(
+            self.club,
+            self.junior_competition,
+            "ŠK LIDO Juniori – nový SZFB názov",
+            self.juniors.szfb_competitor_id,
+        )
+
+        updated.refresh_from_db()
+        self.assertEqual(updated.team_name, "ŠK LIDO Juniori – nový SZFB názov")
+        self.assertEqual(updated.branding_source_id, self.source.id)
+
+    @patch("apps.scraper.services.szfb_sync.fetch_matches", return_value=[])
+    @patch(
+        "apps.scraper.services.szfb_sync.fetch_team_player_stats",
+        return_value={"players": [], "goalies": []},
+    )
+    @patch("apps.scraper.services.szfb_sync.fetch_standings")
+    @patch("apps.scraper.services.szfb_sync.extract_competition_info")
+    def test_competition_sync_preserves_link_when_szfb_name_changes(
+        self,
+        extract_competition_info,
+        fetch_standings,
+        _fetch_team_player_stats,
+        _fetch_matches,
+    ):
+        competition = self.junior_competition
+        competition.source_url = "https://example.com/juniori"
+        competition.save(update_fields=["source_url"])
+        watch = SzfbTeamWatch.objects.filter(
+            competition=competition,
+            club=self.club,
+        ).first()
+        watch.team_name = self.juniors.team_name
+        watch.competitor_id = self.juniors.szfb_competitor_id
+        watch.save(update_fields=["team_name", "competitor_id"])
+        extract_competition_info.return_value = {
+            "szfb_competition_id": competition.szfb_competition_id,
+            "name": "Juniori",
+            "season": "2026/2027",
+            "source_url": competition.source_url,
+            "standings_url": "https://example.com/standings",
+            "results_url": "https://example.com/results",
+        }
+        fetch_standings.return_value = [
+            {
+                "position": 1,
+                "team_name": "ŠK LIDO Juniori – názov zo SZFB",
+                "szfb_competitor_id": self.juniors.szfb_competitor_id,
+                "played": 1,
+                "goals_for": 5,
+                "goals_against": 2,
+                "points": 3,
+            }
+        ]
+
+        sync_competition_from_home_url(
+            competition.source_url,
+            competition_id=competition.id,
+        )
+
+        self.juniors.refresh_from_db()
+        watch.refresh_from_db()
+        self.assertEqual(
+            self.juniors.team_name,
+            "ŠK LIDO Juniori – názov zo SZFB",
+        )
+        self.assertEqual(self.juniors.branding_source_id, self.source.id)
+        self.assertEqual(watch.team_name, self.juniors.team_name)
+
+    def test_unlink_restores_own_visuals(self):
+        serializer = AdminSzfbTeamBrandWriteSerializer(
+            self.juniors,
+            data={"branding_source": None},
+            partial=True,
+            context={"club": self.club},
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        serializer.save()
+
+        data = SzfbTeamBrandSerializer(self.juniors).data
+        self.assertEqual(data["logo_url"], "/media/teams/logos/juniori.png")
+        self.assertEqual(data["shadow_color"], "#ABCDEF")
+
+    def test_multipart_blank_values_unlink_and_do_not_reject_missing_competitor_id(self):
+        serializer = AdminSzfbTeamBrandWriteSerializer(
+            self.juniors,
+            data={
+                "szfb_competitor_id": "",
+                "branding_source": "",
+            },
+            partial=True,
+            context={"club": self.club},
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        serializer.save()
+
+        self.juniors.refresh_from_db()
+        self.assertIsNone(self.juniors.branding_source_id)
+
+    def test_existing_junior_team_can_link_to_existing_mens_branding(self):
+        junior_team = SzfbTeamBrand.objects.create(
+            club=self.club,
+            competition=self.junior_competition,
+            team_name="Florbalový klub AS Trenčín",
+        )
+        mens_branding = SzfbTeamBrand.objects.create(
+            club=self.club,
+            competition=self.mens_competition,
+            team_name="1. FBC Trenčín",
+            logo="teams/logos/trencin.png",
+            shadow_color="#C9020C",
+            use_shadow_color=True,
+        )
+        serializer = AdminSzfbTeamBrandWriteSerializer(
+            junior_team,
+            data={"branding_source": str(mens_branding.id)},
+            partial=True,
+            context={"club": self.club},
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        serializer.save()
+
+        junior_team.refresh_from_db()
+        resolved = SzfbTeamBrandSerializer(junior_team).data
+        self.assertEqual(junior_team.team_name, "Florbalový klub AS Trenčín")
+        self.assertEqual(junior_team.branding_source_id, mens_branding.id)
+        self.assertEqual(resolved["logo_url"], "/media/teams/logos/trencin.png")
+        self.assertEqual(resolved["shadow_color"], "#C9020C")
+
+    def test_same_exact_name_can_have_distinct_szfb_identities_and_share_branding(self):
+        mens = SzfbTeamBrand.objects.create(
+            club=self.club,
+            competition=self.mens_competition,
+            team_name="Oxdog Snipers Bratislava",
+            szfb_competitor_id=301,
+            logo="teams/logos/snipers.png",
+            shadow_color="#FF4B00",
+            use_shadow_color=True,
+        )
+        juniors = SzfbTeamBrand.objects.create(
+            club=self.club,
+            competition=self.junior_competition,
+            team_name="Oxdog Snipers Bratislava",
+            szfb_competitor_id=301,
+            branding_source=mens,
+        )
+
+        self.assertNotEqual(mens.id, juniors.id)
+        self.assertEqual(mens.team_name, juniors.team_name)
+        self.assertEqual(
+            SzfbTeamBrandSerializer(juniors).data["logo_url"],
+            "/media/teams/logos/snipers.png",
+        )
+        self.assertIs(
+            resolve_team_brand(
+                juniors.team_name,
+                [mens, juniors],
+                competition_id=self.junior_competition.id,
+                szfb_competitor_id=juniors.szfb_competitor_id,
+            ),
+            juniors,
+        )
+
+    def test_sync_creates_separate_unlinked_records_for_same_name_and_competitor(self):
+        team_name = "Oxdog Snipers Bratislava"
+        competitor_id = 444
+
+        mens = sync_team_brand_identity(
+            self.club,
+            self.mens_competition,
+            team_name,
+            competitor_id,
+        )
+        juniors = sync_team_brand_identity(
+            self.club,
+            self.junior_competition,
+            team_name,
+            competitor_id,
+        )
+
+        self.assertNotEqual(mens.id, juniors.id)
+        self.assertEqual(mens.competition_id, self.mens_competition.id)
+        self.assertEqual(juniors.competition_id, self.junior_competition.id)
+        self.assertIsNone(mens.branding_source_id)
+        self.assertIsNone(juniors.branding_source_id)
+
+    def test_sync_in_one_competition_does_not_update_other_competition(self):
+        competitor_id = 445
+        mens = sync_team_brand_identity(
+            self.club,
+            self.mens_competition,
+            "Snipers Muži",
+            competitor_id,
+        )
+        juniors = sync_team_brand_identity(
+            self.club,
+            self.junior_competition,
+            "Snipers Juniori",
+            competitor_id,
+        )
+
+        updated_juniors = sync_team_brand_identity(
+            self.club,
+            self.junior_competition,
+            "Oxdog Snipers Bratislava",
+            competitor_id,
+        )
+        mens.refresh_from_db()
+
+        self.assertEqual(updated_juniors.id, juniors.id)
+        self.assertEqual(mens.team_name, "Snipers Muži")
+        self.assertIsNone(updated_juniors.branding_source_id)
+
+    @patch("apps.scraper.views.schedule_team_brand_revalidation")
+    def test_admin_patch_links_existing_junior_team_to_mens_branding(
+        self,
+        schedule_revalidation,
+    ):
+        user = get_user_model().objects.create_user(
+            username="branding-editor",
+            password="password",
+        )
+        ClubMembership.objects.create(
+            user=user,
+            club=self.club,
+            role="club_admin",
+            is_active=True,
+        )
+        client = APIClient()
+        client.force_authenticate(user)
+
+        response = client.patch(
+            reverse(
+                "admin-szfb-team-brand-detail",
+                kwargs={"brand_id": self.juniors.id},
+            ),
+            {
+                "club_slug": self.club.slug,
+                "branding_source": str(self.source.id),
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.juniors.refresh_from_db()
+        self.assertEqual(self.juniors.branding_source_id, self.source.id)
+        self.assertEqual(
+            response.data["branding_source_name"],
+            self.source.team_name,
+        )
+        self.assertTrue(response.data["logo_url"].endswith(self.source.logo.url))
+        schedule_revalidation.assert_called_once()
+
+    def test_self_link_is_rejected(self):
+        serializer = AdminSzfbTeamBrandWriteSerializer(
+            self.source,
+            data={"branding_source": self.source.id},
+            partial=True,
+            context={"club": self.club},
+        )
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("branding_source", serializer.errors)
+
+    def test_cycle_is_rejected(self):
+        serializer = AdminSzfbTeamBrandWriteSerializer(
+            self.source,
+            data={"branding_source": self.juniors.id},
+            partial=True,
+            context={"club": self.club},
+        )
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("branding_source", serializer.errors)
 
 
 class SzfbStandingRowConstraintTests(TestCase):
@@ -456,8 +796,8 @@ class SzfbMatchHistoryTests(SzfbRevalidationTestMixin, TestCase):
     ):
         brand = SzfbTeamBrand.objects.create(
             club=self.club,
-            display_name="Súper",
-            match_key="super",
+            competition=self.competition,
+            team_name="Súper",
             shadow_color="#445566",
             use_shadow_color=True,
         )

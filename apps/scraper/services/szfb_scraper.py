@@ -370,6 +370,18 @@ def fetch_standings(standings_url: str) -> list[dict]:
             if team_link
             else normalize_spaces(cells[1].get_text(" ", strip=True))
         )
+        competitor_id = None
+        if team_link:
+            team_href = team_link.get("href", "")
+            competitor_match = re.search(r"/team/(\d+)(?:/|$)", team_href)
+            if not competitor_match:
+                competitor_match = re.search(
+                    r"[?&]CompetitorID=(\d+)(?:&|$)",
+                    team_href,
+                    flags=re.IGNORECASE,
+                )
+            if competitor_match:
+                competitor_id = int(competitor_match.group(1))
 
         played_text = normalize_spaces(
             played_cell.get_text(" ", strip=True)
@@ -403,6 +415,7 @@ def fetch_standings(standings_url: str) -> list[dict]:
             {
                 "position": position,
                 "team_name": team_name,
+                "szfb_competitor_id": competitor_id,
                 "played": played,
                 "goals_for": goals_for,
                 "goals_against": goals_against,
