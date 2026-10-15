@@ -1,48 +1,86 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
-cd "$(dirname "$0")"
+COMPOSE=(docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml)
+CONTAINER=ludimus_backend
 
-COMPOSE_FILE="docker-compose.yml"
-ENV_FILE=".env"
+usage() {
+  echo "Použitie: sudo ./deploy.sh [--check]"
+  echo "  --check  Len overí aktuálne bežiaci backend, nič nemení."
+  echo "  bez argumentu  Zostaví a nasadí backend po potvrdení."
+}
 
-if [[ "${1:-}" != "--apply" ]]; then
-    echo "Použitie: ./deploy.sh --apply"
-    echo "Skript nič nevykoná bez explicitného --apply."
-    exit 1
+if [[ $# -gt 1 ]] || { [[ $# -eq 1 ]] && [[ "$1" != "--check" ]]; }; then
+  usage
+  exit 2
 fi
 
-if [[ "${LUDIMUS_BACKUP_CONFIRMED:-}" != "yes" ]]; then
-    echo "CHYBA: Pred nasadením musí byť overená aktuálna záloha databázy a media."
-    echo "Po overení spusti s LUDIMUS_BACKUP_CONFIRMED=yes."
-    exit 1
+if [[ $EUID -ne 0 ]]; then
+  echo "CHYBA: Spusti cez sudo."
+  exit 1
 fi
 
-if [[ ! -f "$COMPOSE_FILE" || ! -f "$ENV_FILE" ]]; then
-    echo "CHYBA: Chýba $COMPOSE_FILE alebo produkčný $ENV_FILE."
+for file in .env docker-compose.yml docker-compose.prod.yml; do
+  if [[ ! -f "$file" ]]; then
+    echo "CHYBA: Chýba $file"
     exit 1
-fi
+  fi
+done
 
 if ! docker info >/dev/null 2>&1; then
-    echo "CHYBA: Docker nie je spustený."
-    exit 1
+  echo "CHYBA: Docker nie je dostupný."
+  exit 1
 fi
 
-compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "docker-compose.prod.yml")
+"${COMPOSE[@]}" config --quiet
 
-"${compose[@]}" config --quiet
-"${compose[@]}" build backend
-"${compose[@]}" run --rm backend python manage.py check --deploy
-"${compose[@]}" run --rm backend python manage.py migrate --plan
+check_running() {
+  echo "Kontrolujem Django, migrácie a databázu..."
+  docker exec "$CONTAINER" python manage.py check
+  docker exec "$CONTAINER" python manage.py migrate --check
+  docker exec "$CONTAINER" python manage.py shell -c \
+    "from django.db import connection; c=connection.cursor(); c.execute('SELECT 1'); print('DATABASE OK:', c.fetchone())"
+  echo "Používateľ kontajnera:"
+  docker exec "$CONTAINER" id
+}
 
-read -r -p "Napíš DEPLOY na aplikovanie migrácií a reštart: " confirmation
-if [[ "$confirmation" != "DEPLOY" ]]; then
-    echo "Nasadenie zrušené."
-    exit 1
+if [[ "${1:-}" == "--check" ]]; then
+  check_running
+  echo "KONTROLA DOKONČENÁ"
+  exit 0
 fi
 
-"${compose[@]}" run --rm backend python manage.py migrate --noinput
-"${compose[@]}" run --rm backend python manage.py collectstatic --noinput
-"${compose[@]}" up -d backend
-"${compose[@]}" ps
+printf '\nLUDIMUS WEB – PRODUKČNÝ DEPLOY\n'
+read -r -p "Overil si aktuálnu zálohu DB a media? Napíš BACKUP: " backup_confirm
+if [[ "$backup_confirm" != "BACKUP" ]]; then
+  echo "Deploy zrušený."
+  exit 1
+fi
+
+"${COMPOSE[@]}" build backend
+"${COMPOSE[@]}" run --rm --no-deps --entrypoint python backend manage.py check --deploy
+
+echo "Kontrolujem databázové migrácie..."
+if ! "${COMPOSE[@]}" run --rm --no-deps --entrypoint python backend manage.py migrate --check; then
+  "${COMPOSE[@]}" run --rm --no-deps --entrypoint python backend manage.py migrate --plan
+  read -r -p "Migrácie sú potrebné. Po kontrole plánu napíš MIGRATE: " migrate_confirm
+  if [[ "$migrate_confirm" != "MIGRATE" ]]; then
+    echo "Deploy zrušený bez migrácií."
+    exit 1
+  fi
+  "${COMPOSE[@]}" run --rm --no-deps --entrypoint python backend manage.py migrate --noinput
+fi
+
+read -r -p "Nasadiť novú verziu backendu? Napíš DEPLOY: " deploy_confirm
+if [[ "$deploy_confirm" != "DEPLOY" ]]; then
+  echo "Deploy zrušený."
+  exit 1
+fi
+
+"${COMPOSE[@]}" up -d --no-build --no-deps --force-recreate backend
+check_running
+"${COMPOSE[@]}" ps
+
+echo "DEPLOY DOKONČENÝ – over ešte verejné API a prihlasovanie."
