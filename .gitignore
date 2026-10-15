@@ -24,3 +24,11 @@ staticfiles/
 
 # Logs
 *.log
+
+# Local Docker development
+.env.local
+.env.*
+!.env.example
+media-dev/
+staticfiles-dev/
+backups-local/

@@ -1,0 +1,33 @@
+name: ludimus-web-dev
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    env_file:
+      - .env.local
+
+    environment:
+      APP_ENV: development
+      DB_HOST: host.docker.internal
+      DB_PORT: "5432"
+      DEBUG: "True"
+      ALLOWED_HOSTS: localhost,127.0.0.1,backend
+      EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
+      NEXT_REVALIDATE_URL: ""
+      NEXT_REVALIDATE_SECRET: ""
+
+    command: >
+      python manage.py runserver 0.0.0.0:8000
+
+    ports:
+      - "127.0.0.1:8000:8000"
+
+    volumes:
+      - ./:/app
+      - ./media-dev:/app/media-dev
+      - ./staticfiles-dev:/app/staticfiles
+
+    restart: unless-stopped

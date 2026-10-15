@@ -2,15 +2,56 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 from datetime import timedelta
-
-load_dotenv()
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-change-me")
-DEBUG = os.getenv("DEBUG", "True") == "True"
+# Vývojové a produkčné prostredie
+APP_ENV = os.getenv("APP_ENV", "production").strip().lower()
 
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+if APP_ENV not in {"development", "production"}:
+    raise ImproperlyConfigured("APP_ENV must be development or production.")
+
+IS_LOCAL_ENV = APP_ENV == "development"
+
+# Načítanie lokálnych nastavení
+load_dotenv(
+    BASE_DIR / (".env.local" if IS_LOCAL_ENV else ".env"),
+    override=False,
+)
+
+
+def env_bool(name, default=False):
+    return os.getenv(name, str(default)).strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
+def env_list(name, default=""):
+    return [
+        value.strip()
+        for value in os.getenv(name, default).split(",")
+        if value.strip()
+    ]
+
+
+SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+DEBUG = env_bool("DEBUG", False)
+
+if not SECRET_KEY:
+    if IS_LOCAL_ENV:
+        SECRET_KEY = "django-insecure-local-development-only"
+    else:
+        raise ImproperlyConfigured("SECRET_KEY must be configured in production.")
+
+if not IS_LOCAL_ENV and DEBUG:
+    raise ImproperlyConfigured("DEBUG must be False in production.")
+
+default_allowed_hosts = "localhost,127.0.0.1,backend" if IS_LOCAL_ENV else ""
+ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", default_allowed_hosts)
+
+if not IS_LOCAL_ENV and not ALLOWED_HOSTS:
+    raise ImproperlyConfigured("ALLOWED_HOSTS must be configured in production.")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -104,7 +145,12 @@ STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = os.path.join(BASE_DIR, "media")
+# LOCAL používa media-dev, produkcia pôvodné media.
+MEDIA_ROOT = (
+    BASE_DIR / "media-dev"
+    if IS_LOCAL_ENV
+    else BASE_DIR / "media"
+)
 
 POLL_OPTION_VIDEO_MAX_UPLOAD_SIZE = int(
     os.getenv("POLL_OPTION_VIDEO_MAX_UPLOAD_SIZE", str(100 * 1024 * 1024))
@@ -112,30 +158,34 @@ POLL_OPTION_VIDEO_MAX_UPLOAD_SIZE = int(
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-CORS_ALLOWED_ORIGINS = [
-    "http://127.0.0.1:5173",
-    "http://localhost:5173",
-    "http://127.0.0.1:3000",
-    "http://178.104.54.84:4173",
-    "http://178.104.54.84:3000",
-    "http://178.104.54.84",
-    "http://localhost:3000",
-    "https://www.atukosice.sk",
-    "https://atukosice.sk",
-]
+CORS_ALLOWED_ORIGINS = env_list(
+    "CORS_ALLOWED_ORIGINS",
+    "https://www.atukosice.sk,https://atukosice.sk",
+)
 
-CSRF_TRUSTED_ORIGINS = [
-    "https://atukosice.sk",
-    "https://www.atukosice.sk",
-    "http://178.104.54.84",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-]
+if IS_LOCAL_ENV:
+    CORS_ALLOWED_ORIGINS += [
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+    ]
+
+CSRF_TRUSTED_ORIGINS = env_list(
+    "CSRF_TRUSTED_ORIGINS",
+    "https://atukosice.sk,https://www.atukosice.sk",
+)
+
+if IS_LOCAL_ENV:
+    CSRF_TRUSTED_ORIGINS += [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ]
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # # PRODUCTION SECURITY
-if not DEBUG:
+if not IS_LOCAL_ENV:
     SECURE_SSL_REDIRECT = True
 
     SESSION_COOKIE_SECURE = True

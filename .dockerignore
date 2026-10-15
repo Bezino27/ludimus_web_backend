@@ -18,3 +18,7 @@ staticfiles/
 .DS_Store
 .vscode/
 .idea/
+
+media-dev/
+staticfiles-dev/
+backups-local/
